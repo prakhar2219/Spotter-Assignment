@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Gauge, Filter, ShieldAlert } from 'lucide-react';
+import { Gauge, Filter } from 'lucide-react';
 import { RISK_LEVELS } from './RiskLegend';
 
 export default function CheckpointTable({
@@ -8,11 +8,9 @@ export default function CheckpointTable({
   timelineOffsetHours = 0,
 }) {
   const [filterHazardousOnly, setFilterHazardousOnly] = useState(false);
-  const [viewSnapshot, setViewSnapshot] = useState(false);
 
-  // Sync snapshot toggle when timeline slider moves past 0
   const isTimelineActive = timelineOffsetHours > 0;
-  const showSnapshotData = isTimelineActive && (viewSnapshot || true);
+  const showSnapshotData = isTimelineActive;
 
   if (!route || !route.checkpoints || route.checkpoints.length === 0) {
     return (

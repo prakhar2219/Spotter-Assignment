@@ -10,17 +10,11 @@ import RiskLegend from './components/RiskLegend';
 import {
   Compass,
   RefreshCw,
-  Server,
   AlertTriangle,
   RotateCcw,
   Layers,
   MapPin,
-  Calendar,
-  Truck,
-  CheckCircle2,
-  Clock,
-  ShieldCheck,
-  ChevronRight
+  ChevronRight,
 } from 'lucide-react';
 
 export default function App() {

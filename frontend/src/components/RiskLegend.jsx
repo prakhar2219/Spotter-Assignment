@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShieldAlert, Wind, CloudRain, CloudSnow, Info } from 'lucide-react';
+import { ShieldAlert, Info } from 'lucide-react';
 
 export const RISK_LEVELS = {
   'Low': {

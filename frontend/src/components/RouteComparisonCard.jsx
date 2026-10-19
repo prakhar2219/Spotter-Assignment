@@ -1,5 +1,5 @@
 import React from 'react';
-import { Check, Ban, Clock, MapPin, Gauge } from 'lucide-react';
+import { Check, Ban } from 'lucide-react';
 
 export default function RouteComparisonCard({
   route,

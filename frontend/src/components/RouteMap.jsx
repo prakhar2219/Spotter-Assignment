@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useMemo, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { RISK_LEVELS } from './RiskLegend';
-import { Navigation, ZoomIn, Maximize2, Layers, Flame, Clock } from 'lucide-react';
+import { Navigation, ZoomIn, Maximize2, Layers, Flame } from 'lucide-react';
 
 // Fix default Leaflet icon paths in bundlers (prevents 404s for default marker PNGs)
 delete L.Icon.Default.prototype._getIconUrl;

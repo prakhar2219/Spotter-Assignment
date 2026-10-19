@@ -1,5 +1,5 @@
 import React from 'react';
-import { Trophy, ShieldAlert, Award, ArrowRight, CheckCircle2, AlertOctagon, XCircle } from 'lucide-react';
+import { Trophy, ShieldAlert, Award, AlertOctagon } from 'lucide-react';
 
 const DECISION_CRITERION_LABELS = {
   'fewest_severe_miles': 'Tier 1: Fewest Severe Miles (Hazard Avoidance)',

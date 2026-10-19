@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Clock, Play, Pause, RotateCcw, Calendar, FastForward, Info } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Clock, Play, Pause, RotateCcw } from 'lucide-react';
 
 export default function ForecastSlider({
   offsetHours,
@@ -43,8 +43,13 @@ export default function ForecastSlider({
     }
   };
 
-  const baseDate = baseDepartureTime ? new Date(baseDepartureTime) : new Date();
-  const selectedDate = new Date(baseDate.getTime() + offsetHours * 3600 * 1000);
+  const baseDate = useMemo(() => {
+    return baseDepartureTime ? new Date(baseDepartureTime) : new Date();
+  }, [baseDepartureTime]);
+
+  const selectedDate = useMemo(() => {
+    return new Date(baseDate.getTime() + offsetHours * 3600 * 1000);
+  }, [baseDate, offsetHours]);
 
   const quickOffsets = [0, 6, 12, 24, 36, 48];
 
