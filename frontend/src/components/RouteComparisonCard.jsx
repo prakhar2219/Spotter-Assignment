@@ -16,6 +16,7 @@ export default function RouteComparisonCard({
   const pctHigh = Math.round(((metrics.high_miles || 0) / totalDist) * 100);
   const pctSev = Math.round(((metrics.severe_miles || 0) / totalDist) * 100);
   const pctNo = Math.round(((metrics.no_travel_miles || 0) / totalDist) * 100);
+  const pctUnk = Math.round(((metrics.unknown_miles || 0) / totalDist) * 100);
 
   return (
     <div
@@ -114,6 +115,9 @@ export default function RouteComparisonCard({
             <div style={{ width: `${pctHigh}%` }} className="bg-amber-500" title={`High: ${metrics.high_miles || 0} mi`} />
             <div style={{ width: `${pctSev}%` }} className="bg-orange-500" title={`Severe: ${metrics.severe_miles || 0} mi`} />
             <div style={{ width: `${pctNo}%` }} className="bg-rose-600" title={`No Travel: ${metrics.no_travel_miles || 0} mi`} />
+            {pctUnk > 0 && (
+              <div style={{ width: `${pctUnk}%` }} className="bg-purple-600" title={`Unknown: ${metrics.unknown_miles || 0} mi`} />
+            )}
           </div>
         </div>
       </div>

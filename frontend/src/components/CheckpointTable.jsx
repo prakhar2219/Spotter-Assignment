@@ -18,7 +18,10 @@ export default function CheckpointTable({
 
   const checkpoints = route.checkpoints;
   const filteredCheckpoints = filterHazardousOnly
-    ? checkpoints.filter(cp => (cp.risk?.overall_score || 0) > 0)
+    ? checkpoints.filter(cp => {
+        const score = cp.risk?.overall_score;
+        return (typeof score === 'number' && score > 0) || cp.risk?.overall_risk === 'Unknown';
+      })
     : checkpoints;
 
   return (
@@ -72,7 +75,8 @@ export default function CheckpointTable({
               const windCond = cond.wind || {};
               const rainCond = cond.rain || {};
               const snowCond = cond.snow || {};
-              const badge = RISK_LEVELS[r.overall_risk] || RISK_LEVELS['Low'];
+              const riskKey = r.overall_risk || (w.is_available === false ? 'Unknown' : 'Low');
+              const badge = RISK_LEVELS[riskKey] || RISK_LEVELS['Low'];
 
               return (
                 <tr key={cp.index} className="hover:bg-slate-50/80 transition-colors">
@@ -107,7 +111,7 @@ export default function CheckpointTable({
                     <span
                       className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10.5px] border ${badge.bg}`}
                     >
-                      <span className={`w-1.5 h-1.5 rounded-full ${badge.dot}`} />
+                      <span className="font-bold text-[10px]">{badge.symbol || '●'}</span>
                       {badge.label}
                     </span>
                   </td>

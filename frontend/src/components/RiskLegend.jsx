@@ -9,6 +9,8 @@ export const RISK_LEVELS = {
     score: 0,
     label: 'Low Risk',
     desc: 'Wind <25 mph, Rain <0.10 in/hr, Snow <0.5 in/hr',
+    symbol: '●',
+    shape: 'circle',
   },
   'Moderate': {
     color: '#0284c7',
@@ -17,6 +19,8 @@ export const RISK_LEVELS = {
     score: 1,
     label: 'Moderate',
     desc: 'Wind 25–34 mph, Rain 0.10–0.25 in/hr, Snow 0.5–1.0 in/hr',
+    symbol: '●',
+    shape: 'circle',
   },
   'High': {
     color: '#f59e0b',
@@ -25,6 +29,8 @@ export const RISK_LEVELS = {
     score: 2,
     label: 'High Risk',
     desc: 'Wind 35–44 mph (≤40k lb), Rain 0.25–0.50 in/hr, Snow 1.0–2.0 in/hr',
+    symbol: '●',
+    shape: 'circle',
   },
   'Severe': {
     color: '#f97316',
@@ -33,6 +39,8 @@ export const RISK_LEVELS = {
     score: 3,
     label: 'Severe Risk',
     desc: 'Wind 45–54 mph (≤30k lb) or 35–44 mph (>40k lb), Rain 0.50–1.00 in/hr, Snow 2.0–3.0 in/hr',
+    symbol: '●',
+    shape: 'circle',
   },
   'No Travel': {
     color: '#e11d48',
@@ -41,6 +49,18 @@ export const RISK_LEVELS = {
     score: 4,
     label: 'NO TRAVEL',
     desc: 'Wind ≥55 mph (any load), 45–54 mph (>30k lb), Rain >1.00 in/hr, Snow >3.0 in/hr',
+    symbol: '⛔',
+    shape: 'octagon',
+  },
+  'Unknown': {
+    color: '#7c3aed',
+    bg: 'bg-purple-50 text-purple-900 border-purple-300 font-semibold',
+    dot: 'bg-purple-600',
+    score: '—',
+    label: 'Unknown',
+    desc: 'Missing or unavailable forecast. Never treated as safe.',
+    symbol: '?',
+    shape: 'dashed',
   },
 };
 
@@ -51,8 +71,14 @@ export default function RiskLegend({ compact = false }) {
         <span className="font-semibold text-slate-700">Risk Scale:</span>
         {Object.entries(RISK_LEVELS).map(([level, info]) => (
           <span key={level} className="inline-flex items-center gap-1.5 font-medium">
-            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: info.color }} />
-            {level} ({info.score})
+            <span
+              className="w-2.5 h-2.5 rounded-full inline-block"
+              style={{
+                backgroundColor: info.color,
+                border: info.shape === 'dashed' ? '1px dashed #ffffff' : 'none',
+              }}
+            />
+            {level} {info.score !== '—' ? `(${info.score})` : ''}
           </span>
         ))}
       </div>
@@ -69,13 +95,18 @@ export default function RiskLegend({ compact = false }) {
         <span className="text-[11px] font-mono text-slate-500">Spotter Specification</span>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
         {Object.entries(RISK_LEVELS).map(([level, info]) => (
           <div key={level} className={`p-2.5 rounded-lg border ${info.bg} flex flex-col justify-between`}>
             <div>
               <div className="flex items-center justify-between mb-1">
-                <span className="font-bold">{level}</span>
-                <span className="font-mono text-[10px] px-1.5 py-0.2 rounded bg-white/70">Score: {info.score}</span>
+                <span className="font-bold flex items-center gap-1 text-[11px]">
+                  <span>{info.symbol}</span>
+                  <span>{level}</span>
+                </span>
+                <span className="font-mono text-[9.5px] px-1 py-0.2 rounded bg-white/70">
+                  {info.score !== '—' ? `Score: ${info.score}` : 'Unsafe'}
+                </span>
               </div>
               <p className="text-[10px] leading-snug opacity-90">{info.desc}</p>
             </div>
@@ -86,12 +117,13 @@ export default function RiskLegend({ compact = false }) {
       <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 text-[11px] text-slate-600 space-y-1">
         <p className="font-semibold text-slate-800 flex items-center gap-1.5">
           <ShieldAlert className="w-3.5 h-3.5 text-amber-600" />
-          Load-Dependent Safety Thresholds:
+          Load-Dependent Safety Thresholds & Accessible Symbols:
         </p>
         <ul className="list-disc list-inside space-y-0.5 text-slate-600 text-[10.5px]">
           <li><strong>Wind &ge; 55 mph:</strong> Instant No Travel for all truck gross weights.</li>
           <li><strong>Wind 45–54 mph:</strong> No Travel if cargo load &gt; 30,000 lb (elevated from Severe).</li>
           <li><strong>Wind 35–44 mph:</strong> Severe risk if cargo load &gt; 40,000 lb (elevated from High).</li>
+          <li><strong>Shape Indicators:</strong> No Travel checkpoints use an <strong>Octagon (⛔)</strong> shape. Unknown data uses a <strong>Dashed (?)</strong> badge.</li>
         </ul>
       </div>
     </div>
