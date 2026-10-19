@@ -39,28 +39,43 @@ export async function checkBackendHealth() {
 }
 
 /**
- * Request genuine route alternatives from the Django routing service.
+ * Request genuine route alternatives from the Django routing service with optional checkpoints & weather.
  * @param {Object} params
  * @param {string|Array<number>} params.origin - Place query or [lon, lat]
  * @param {string|Array<number>} params.destination - Place query or [lon, lat]
  * @param {string} [params.provider] - Optional provider override ('openrouteservice', 'mapbox', 'osrm')
  * @param {number} [params.maxAlternatives=3] - Target alternative count
+ * @param {string} [params.departureTime] - ISO 8601 departure timestamp
+ * @param {number} [params.samplingIntervalMiles=25] - Checkpoint interval (10, 25, 50)
  * @returns {Promise<{success: boolean, data: any, error: string|null}>}
  */
-export async function previewRoutes({ origin, destination, provider, maxAlternatives = 3 }) {
+export async function previewRoutes({
+  origin,
+  destination,
+  provider,
+  maxAlternatives = 3,
+  departureTime,
+  samplingIntervalMiles = 25,
+}) {
   try {
+    const payload = {
+      origin,
+      destination,
+      provider,
+      max_alternatives: maxAlternatives,
+      sampling_interval_miles: samplingIntervalMiles,
+    };
+    if (departureTime) {
+      payload.departure_time = departureTime;
+    }
+
     const response = await fetch(`${API_BASE_URL}/api/routes/preview/`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
       },
-      body: JSON.stringify({
-        origin,
-        destination,
-        provider,
-        max_alternatives: maxAlternatives,
-      }),
+      body: JSON.stringify(payload),
     });
 
     const data = await response.json();

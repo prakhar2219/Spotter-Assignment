@@ -16,7 +16,12 @@ import {
   Clock,
   Gauge,
   AlertTriangle,
-  ChevronRight
+  ChevronRight,
+  Wind,
+  CloudRain,
+  CloudSnow,
+  Calendar,
+  CloudSun
 } from 'lucide-react';
 
 export default function App() {
@@ -29,13 +34,21 @@ export default function App() {
     lastChecked: null,
   });
 
-  // Route preview test state
+  // Trip inputs
   const [originInput, setOriginInput] = useState('Philadelphia, PA');
   const [destInput, setDestInput] = useState('Baltimore, MD');
   const [providerInput, setProviderInput] = useState('osrm');
+  const [intervalInput, setIntervalInput] = useState(25);
+  const [departureInput, setDepartureInput] = useState(() => {
+    const now = new Date();
+    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+    return now.toISOString().slice(0, 16);
+  });
+
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewResult, setPreviewResult] = useState(null);
   const [previewError, setPreviewError] = useState(null);
+  const [selectedRouteId, setSelectedRouteId] = useState(null);
 
   const runHealthCheck = useCallback(async () => {
     setHealthStatus(prev => ({ ...prev, loading: true }));
@@ -59,20 +72,30 @@ export default function App() {
     setPreviewLoading(true);
     setPreviewError(null);
 
+    // Convert local datetime-local to ISO string with timezone
+    let isoDeparture = new Date(departureInput).toISOString();
+
     const res = await previewRoutes({
       origin: originInput,
       destination: destInput,
       provider: providerInput,
       maxAlternatives: 3,
+      departureTime: isoDeparture,
+      samplingIntervalMiles: parseInt(intervalInput, 10),
     });
 
     setPreviewLoading(false);
     if (res.success) {
       setPreviewResult(res.data);
+      if (res.data.routes && res.data.routes.length > 0) {
+        setSelectedRouteId(res.data.routes[0].id);
+      }
     } else {
       setPreviewError(res.error);
     }
   };
+
+  const selectedRoute = previewResult?.routes?.find(r => r.id === selectedRouteId) || previewResult?.routes?.[0];
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
@@ -138,20 +161,20 @@ export default function App() {
           <div className="max-w-3xl space-y-3 relative z-10">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-teal-50 border border-teal-200 text-teal-800 text-xs font-semibold">
               <span className="w-1.5 h-1.5 rounded-full bg-teal-600" />
-              Phase 2 Milestone — Alternative Routing Engine Active
+              Phase 3 Milestone — Time-Aware Weather Checkpoints Active
             </div>
             
             <h1 className="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
-              Genuine Alternative Truck Routes Engine
+              Route Geometry Checkpoints & ETA-Aware Forecasts
             </h1>
             
             <p className="text-slate-600 text-sm sm:text-base leading-relaxed">
-              Generates up to three genuine alternative transit routes with real road geometries, precise distances in miles/meters, and durations. Strictly enforces no route duplication or fabrication.
+              Discretizes genuine route geometries into 10, 25, or 50-mile road checkpoints, estimates progressive arrival timestamps, and retrieves hourly meteorological forecasts (wind speed, rain intensity, snowfall).
             </p>
           </div>
         </div>
 
-        {/* Live Route Preview Test Bench */}
+        {/* Live Trip Form & Checkpoint Generator */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
           <div className="border-b border-slate-200 bg-slate-50/70 px-6 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div className="flex items-center gap-2.5">
@@ -159,18 +182,18 @@ export default function App() {
                 <Route className="w-4 h-4" />
               </div>
               <div>
-                <h2 className="text-sm font-bold text-slate-900">Routing Engine Test Bench (POST /api/routes/preview/)</h2>
-                <p className="text-xs text-slate-500">Test live route generation, geocoding resolution, and genuine alternatives</p>
+                <h2 className="text-sm font-bold text-slate-900">Trip & Checkpoint Planning Engine</h2>
+                <p className="text-xs text-slate-500">Samples road geometry and retrieves time-aware Open-Meteo forecasts</p>
               </div>
             </div>
 
-            <span className="text-xs font-mono bg-slate-200/80 px-2.5 py-1 rounded text-slate-700">
-              GeoJSON [lon, lat] Coordinates
+            <span className="text-xs font-mono bg-teal-50 border border-teal-200 px-2.5 py-1 rounded text-teal-800 font-semibold">
+              Intervals: 10 / 25 / 50 mi &bull; Units: mph, in/hr
             </span>
           </div>
 
           <div className="p-6">
-            <form onSubmit={handlePreviewRoutes} className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <form onSubmit={handlePreviewRoutes} className="grid grid-cols-1 md:grid-cols-5 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                   Origin Location
@@ -181,7 +204,7 @@ export default function App() {
                     type="text"
                     value={originInput}
                     onChange={(e) => setOriginInput(e.target.value)}
-                    placeholder="e.g. Philadelphia, PA or lon,lat"
+                    placeholder="e.g. Philadelphia, PA"
                     required
                     className="w-full pl-9 pr-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-teal-500 bg-white"
                   />
@@ -198,7 +221,7 @@ export default function App() {
                     type="text"
                     value={destInput}
                     onChange={(e) => setDestInput(e.target.value)}
-                    placeholder="e.g. Baltimore, MD or lon,lat"
+                    placeholder="e.g. Baltimore, MD"
                     required
                     className="w-full pl-9 pr-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-teal-500 bg-white"
                   />
@@ -207,16 +230,32 @@ export default function App() {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                  Routing Provider
+                  Departure Time
+                </label>
+                <div className="relative">
+                  <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  <input
+                    type="datetime-local"
+                    value={departureInput}
+                    onChange={(e) => setDepartureInput(e.target.value)}
+                    required
+                    className="w-full pl-9 pr-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-teal-500 bg-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  Sampling Interval
                 </label>
                 <select
-                  value={providerInput}
-                  onChange={(e) => setProviderInput(e.target.value)}
-                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-teal-500 bg-white"
+                  value={intervalInput}
+                  onChange={(e) => setIntervalInput(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-teal-500 bg-white font-medium"
                 >
-                  <option value="osrm">OSRM (OpenStreetMap Public - Zero Config)</option>
-                  <option value="openrouteservice">OpenRouteService (Requires ROUTING_API_KEY)</option>
-                  <option value="mapbox">Mapbox Directions (Requires Token)</option>
+                  <option value={10}>10 miles (High resolution)</option>
+                  <option value={25}>25 miles (Standard)</option>
+                  <option value={50}>50 miles (Long-haul)</option>
                 </select>
               </div>
 
@@ -227,7 +266,7 @@ export default function App() {
                   className="w-full py-2 px-4 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold flex items-center justify-center gap-2 transition disabled:opacity-50 shadow-sm"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${previewLoading ? 'animate-spin' : ''}`} />
-                  {previewLoading ? 'Generating Routes...' : 'Request Route Alternatives'}
+                  {previewLoading ? 'Analyzing Routes...' : 'Generate Route Checkpoints'}
                 </button>
               </div>
             </form>
@@ -237,7 +276,7 @@ export default function App() {
               <div className="mt-4 p-3.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2.5">
                 <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
                 <div>
-                  <p className="font-bold">Routing Error</p>
+                  <p className="font-bold">Routing / Weather Error</p>
                   <p className="text-slate-700 font-mono text-[11px] mt-0.5">{previewError}</p>
                 </div>
               </div>
@@ -245,10 +284,11 @@ export default function App() {
 
             {/* Results Display */}
             {previewResult && (
-              <div className="mt-6 space-y-4">
+              <div className="mt-6 space-y-5">
+                {/* Geocoding resolved banner */}
                 <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
-                    <span className="font-semibold text-slate-700">Resolved Origin:</span>
+                    <span className="font-semibold text-slate-700">Origin:</span>
                     <span className="text-slate-900 font-medium">{previewResult.origin.display_name}</span>
                     <code className="text-[11px] bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono">
                       [{previewResult.origin.coordinates[0].toFixed(4)}, {previewResult.origin.coordinates[1].toFixed(4)}]
@@ -256,7 +296,7 @@ export default function App() {
                   </div>
                   <ChevronRight className="w-4 h-4 text-slate-400 hidden sm:block" />
                   <div className="flex items-center gap-2">
-                    <span className="font-semibold text-slate-700">Resolved Destination:</span>
+                    <span className="font-semibold text-slate-700">Destination:</span>
                     <span className="text-slate-900 font-medium">{previewResult.destination.display_name}</span>
                     <code className="text-[11px] bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono">
                       [{previewResult.destination.coordinates[0].toFixed(4)}, {previewResult.destination.coordinates[1].toFixed(4)}]
@@ -264,57 +304,176 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between text-xs text-slate-600 px-1">
-                  <span>
-                    Genuine Alternatives Returned:{' '}
-                    <strong className="text-slate-900">{previewResult.routes_count}</strong> (Strictly no duplication)
-                  </span>
-                  <span className="font-mono text-[11px] text-teal-700 font-semibold">
-                    Provider: {previewResult.provider}
-                  </span>
+                {/* Route Alternatives Selection Cards */}
+                <div>
+                  <h3 className="text-xs font-bold text-slate-700 mb-2 uppercase tracking-wider">
+                    Select Route Alternative ({previewResult.routes_count} Available):
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {previewResult.routes.map((rt) => {
+                      const isSelected = rt.id === selectedRouteId;
+                      return (
+                        <div
+                          key={rt.id}
+                          onClick={() => setSelectedRouteId(rt.id)}
+                          className={`p-4 rounded-xl border cursor-pointer transition ${
+                            isSelected
+                              ? 'border-teal-600 bg-teal-50/30 ring-2 ring-teal-500/20'
+                              : 'border-slate-200 bg-white hover:border-slate-300'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono uppercase ${
+                                isSelected ? 'bg-teal-600 text-white' : 'bg-slate-100 text-slate-700'
+                              }`}
+                            >
+                              {rt.id}
+                            </span>
+                            <span className="text-xs font-semibold text-slate-500 flex items-center gap-1">
+                              <Clock className="w-3.5 h-3.5 text-slate-400" />
+                              {rt.duration_formatted}
+                            </span>
+                          </div>
+
+                          <h4 className="font-bold text-sm text-slate-900 mb-2 truncate" title={rt.name}>
+                            {rt.name}
+                          </h4>
+
+                          <div className="space-y-1 text-xs text-slate-600 pt-2 border-t border-slate-100">
+                            <div className="flex justify-between">
+                              <span>Distance:</span>
+                              <strong className="text-slate-900">{rt.distance_miles} miles</strong>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Checkpoints:</span>
+                              <span className="font-mono font-medium text-teal-800">
+                                {rt.checkpoints_count || rt.checkpoints?.length || 0} checkpoints
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {previewResult.routes.map((rt, idx) => (
-                    <div
-                      key={rt.id}
-                      className="p-4 rounded-xl border border-slate-200 bg-white hover:border-teal-400 hover:shadow-sm transition"
-                    >
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-50 text-teal-800 border border-teal-200 uppercase font-mono">
-                          {rt.id}
-                        </span>
-                        <span className="text-xs font-semibold text-slate-500 flex items-center gap-1">
-                          <Clock className="w-3.5 h-3.5 text-slate-400" />
-                          {rt.duration_formatted}
-                        </span>
+                {/* Selected Route Checkpoint Table */}
+                {selectedRoute && selectedRoute.checkpoints && (
+                  <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+                    <div className="bg-slate-50 border-b border-slate-200 px-4 py-3 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Gauge className="w-4 h-4 text-teal-600" />
+                        <h4 className="text-xs font-bold text-slate-900">
+                          Checkpoint Weather Forecasts for {selectedRoute.name} ({selectedRoute.checkpoints.length} Checkpoints @ {intervalInput} mi)
+                        </h4>
                       </div>
-
-                      <h3 className="font-bold text-sm text-slate-900 mb-2 truncate" title={rt.name}>
-                        {rt.name}
-                      </h3>
-
-                      <div className="space-y-1.5 text-xs text-slate-600 pt-2 border-t border-slate-100">
-                        <div className="flex justify-between">
-                          <span>Total Distance:</span>
-                          <strong className="text-slate-900">{rt.distance_miles} mi ({Math.round(rt.distance_meters / 1000)} km)</strong>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Duration (Hours):</span>
-                          <span className="font-mono">{rt.duration_hours} hrs</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Geometry Points:</span>
-                          <span className="font-mono">{rt.geometry.coordinates.length} waypoints</span>
-                        </div>
-                      </div>
-
-                      <div className="mt-3 pt-2 border-t border-slate-100 text-[11px] text-slate-500 font-mono truncate">
-                        Start: [{rt.geometry.coordinates[0][0].toFixed(4)}, {rt.geometry.coordinates[0][1].toFixed(4)}]
-                      </div>
+                      <span className="text-[11px] text-slate-500">
+                        Normalized Units: Wind (mph), Rain & Snow (in/hr)
+                      </span>
                     </div>
-                  ))}
-                </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="bg-slate-100/70 border-b border-slate-200 text-slate-600 font-semibold">
+                            <th className="py-2.5 px-3">#</th>
+                            <th className="py-2.5 px-3">Checkpoint</th>
+                            <th className="py-2.5 px-3">Cum. Distance</th>
+                            <th className="py-2.5 px-3">Estimated Arrival (ETA)</th>
+                            <th className="py-2.5 px-3">Coordinates</th>
+                            <th className="py-2.5 px-3">Condition</th>
+                            <th className="py-2.5 px-3">Wind Speed</th>
+                            <th className="py-2.5 px-3">Rain Intensity</th>
+                            <th className="py-2.5 px-3">Snow Intensity</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 text-slate-700">
+                          {selectedRoute.checkpoints.map((cp) => {
+                            const w = cp.weather || {};
+                            return (
+                              <tr key={cp.index} className="hover:bg-slate-50/80 transition-colors">
+                                <td className="py-2 px-3 font-mono text-[11px] font-bold text-slate-500">
+                                  {cp.index}
+                                </td>
+                                <td className="py-2 px-3 font-medium text-slate-900 flex items-center gap-1.5">
+                                  {cp.is_origin && (
+                                    <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" title="Origin" />
+                                  )}
+                                  {cp.is_destination && (
+                                    <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0" title="Destination" />
+                                  )}
+                                  {cp.name}
+                                </td>
+                                <td className="py-2 px-3 font-mono">
+                                  {cp.cumulative_distance_miles} mi
+                                  {cp.segment_distance_miles > 0 && (
+                                    <span className="text-[10px] text-slate-400 ml-1">
+                                      (+{cp.segment_distance_miles})
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="py-2 px-3 font-mono text-slate-900">
+                                  {new Date(cp.estimated_arrival_time).toLocaleTimeString([], {
+                                    month: 'short',
+                                    day: 'numeric',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  })}
+                                </td>
+                                <td className="py-2 px-3 font-mono text-[11px] text-slate-500">
+                                  [{cp.coordinates[0].toFixed(3)}, {cp.coordinates[1].toFixed(3)}]
+                                </td>
+                                <td className="py-2 px-3">
+                                  {w.is_available ? (
+                                    <span className="inline-flex items-center gap-1 text-slate-800 font-medium">
+                                      <CloudSun className="w-3.5 h-3.5 text-amber-500" />
+                                      {w.weather_description}
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 text-amber-700 bg-amber-50 px-2 py-0.5 rounded text-[10px] font-medium border border-amber-200">
+                                      {w.status || 'Unavailable'}
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="py-2 px-3 font-mono">
+                                  {w.wind_speed_mph !== null && w.wind_speed_mph !== undefined ? (
+                                    <span className="inline-flex items-center gap-1 font-semibold text-slate-900">
+                                      <Wind className="w-3 h-3 text-cyan-600" />
+                                      {w.wind_speed_mph} mph
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-400">—</span>
+                                  )}
+                                </td>
+                                <td className="py-2 px-3 font-mono">
+                                  {w.precipitation_in_hr !== null && w.precipitation_in_hr !== undefined ? (
+                                    <span className="inline-flex items-center gap-1 text-slate-900">
+                                      <CloudRain className="w-3 h-3 text-blue-500" />
+                                      {w.precipitation_in_hr} in/hr
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-400">—</span>
+                                  )}
+                                </td>
+                                <td className="py-2 px-3 font-mono">
+                                  {w.snowfall_in_hr !== null && w.snowfall_in_hr !== undefined ? (
+                                    <span className="inline-flex items-center gap-1 text-slate-900">
+                                      <CloudSnow className="w-3 h-3 text-indigo-400" />
+                                      {w.snowfall_in_hr} in/hr
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-400">—</span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -357,10 +516,18 @@ export default function App() {
 
               <div className="space-y-2.5 pt-2">
                 <div className="flex items-center justify-between text-xs py-1.5 border-b border-slate-100">
-                  <span className="text-slate-500">Endpoint:</span>
-                  <code className="bg-slate-100 px-2 py-0.5 rounded text-slate-800 font-mono text-[11px]">
-                    GET /api/health/
-                  </code>
+                  <span className="text-slate-500">Endpoints Active:</span>
+                  <div className="flex flex-col items-end gap-1">
+                    <code className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-800 font-mono text-[10px]">
+                      GET /api/health/
+                    </code>
+                    <code className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-800 font-mono text-[10px]">
+                      POST /api/routes/preview/
+                    </code>
+                    <code className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-800 font-mono text-[10px]">
+                      POST /api/routes/checkpoints/
+                    </code>
+                  </div>
                 </div>
                 <div className="flex items-center justify-between text-xs py-1.5 border-b border-slate-100">
                   <span className="text-slate-500">Response Latency:</span>
@@ -369,25 +536,14 @@ export default function App() {
                   </span>
                 </div>
                 <div className="flex items-center justify-between text-xs py-1.5 border-b border-slate-100">
-                  <span className="text-slate-500">Last Verified:</span>
-                  <span className="text-slate-800 font-mono">
-                    {healthStatus.lastChecked || 'Pending...'}
-                  </span>
+                  <span className="text-slate-500">Weather Provider:</span>
+                  <span className="text-slate-800 font-medium">Open-Meteo Hourly (Free tier)</span>
                 </div>
                 <div className="flex items-center justify-between text-xs py-1.5">
                   <span className="text-slate-500">CORS Allowed Origin:</span>
                   <span className="text-emerald-700 font-medium">http://localhost:5173</span>
                 </div>
               </div>
-
-              {healthStatus.data && (
-                <div className="mt-2 pt-2">
-                  <span className="text-xs text-slate-500 font-medium block mb-1">Health Payload:</span>
-                  <pre className="bg-slate-900 text-teal-300 p-3 rounded-lg text-[11px] font-mono overflow-x-auto">
-                    {JSON.stringify(healthStatus.data, null, 2)}
-                  </pre>
-                </div>
-              )}
             </div>
 
             <button
@@ -416,8 +572,8 @@ export default function App() {
               <div className="space-y-3">
                 <div className="p-3 rounded-lg bg-slate-50 border border-slate-200/60 flex items-start justify-between">
                   <div>
-                    <p className="text-xs font-semibold text-slate-900">Frontend Layer</p>
-                    <p className="text-[11px] text-slate-500">React 19, Vite, Tailwind CSS, Leaflet</p>
+                    <p className="text-xs font-semibold text-slate-900">Routing Provider Engine</p>
+                    <p className="text-[11px] text-slate-500">Multi-provider: ORS, Mapbox, OSRM</p>
                   </div>
                   <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
                     ACTIVE
@@ -426,43 +582,43 @@ export default function App() {
 
                 <div className="p-3 rounded-lg bg-slate-50 border border-slate-200/60 flex items-start justify-between">
                   <div>
-                    <p className="text-xs font-semibold text-slate-900">Routing Provider Engine</p>
-                    <p className="text-[11px] text-slate-500">OpenRouteService, Mapbox, OSRM multi-provider</p>
+                    <p className="text-xs font-semibold text-slate-900">Road Checkpoint Sampling</p>
+                    <p className="text-[11px] text-slate-500">10, 25, 50 mi intervals along actual geometry</p>
                   </div>
                   <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                    PHASE 2 DONE
+                    PHASE 3 DONE
                   </span>
                 </div>
 
                 <div className="p-3 rounded-lg bg-slate-50 border border-slate-200/60 flex items-start justify-between">
                   <div>
-                    <p className="text-xs font-semibold text-slate-900">Road Geometry Normalization</p>
-                    <p className="text-[11px] text-slate-500">GeoJSON [lon, lat] LineString with miles & duration</p>
+                    <p className="text-xs font-semibold text-slate-900">Weather Forecast Matcher</p>
+                    <p className="text-[11px] text-slate-500">Time-aware hourly matching in mph & in/hr</p>
                   </div>
                   <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                    VERIFIED
+                    PHASE 3 DONE
                   </span>
                 </div>
 
                 <div className="p-3 rounded-lg bg-slate-50 border border-slate-200/60 flex items-start justify-between">
                   <div>
-                    <p className="text-xs font-semibold text-slate-900">Weather Forecast Engine</p>
-                    <p className="text-[11px] text-slate-500">Time-aware hourly checkpoints & risk rules</p>
+                    <p className="text-xs font-semibold text-slate-900">Load-Dependent Risk Rules</p>
+                    <p className="text-[11px] text-slate-500">Truck weight crosswind & precipitation rules</p>
                   </div>
                   <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-200 text-slate-700">
-                    PHASE 3-4
+                    PHASE 4 NEXT
                   </span>
                 </div>
               </div>
             </div>
 
             <div className="mt-4 pt-3 border-t border-slate-100 text-[11px] text-slate-500 flex items-center justify-between">
-              <span>Security: Backend proxy keeps keys private</span>
+              <span>Forecast Horizon: 0–168 Hours</span>
               <ShieldCheck className="w-4 h-4 text-teal-600" />
             </div>
           </div>
 
-          {/* Phase 2 Acceptance Checklist Card */}
+          {/* Phase 3 Acceptance Checklist Card */}
           <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm flex flex-col justify-between">
             <div>
               <div className="flex items-center gap-2.5 mb-4">
@@ -470,19 +626,21 @@ export default function App() {
                   <Activity className="w-5 h-5" />
                 </div>
                 <div>
-                  <h2 className="text-base font-bold text-slate-900">Phase 2 Acceptance</h2>
+                  <h2 className="text-base font-bold text-slate-900">Phase 3 Acceptance</h2>
                   <p className="text-xs text-slate-500">Verification checklist</p>
                 </div>
               </div>
 
               <div className="space-y-2.5">
                 {[
-                  { text: 'Real origin and destination resolve correctly', done: true },
-                  { text: 'Response includes genuine alternatives, distance, duration & geometry', done: true },
-                  { text: 'Geometry renders in GeoJSON [lon, lat] format', done: true },
-                  { text: 'Provider errors and missing credentials handled cleanly', done: true },
-                  { text: 'Never fabricates routes if provider returns fewer alternatives', done: true },
-                  { text: 'Automated test suite passing (15/15 tests)', done: true },
+                  { text: '10, 25, and 50-mile sampling intervals supported', done: true },
+                  { text: 'Checkpoints follow actual road geometry, not straight lines', done: true },
+                  { text: 'Origin & destination checkpoints included (no duplicates)', done: true },
+                  { text: 'Timezone-aware ETAs increase monotonically along route', done: true },
+                  { text: 'Forecast requests match checkpoint coordinates & arrival time', done: true },
+                  { text: 'Weather units normalized into mph and in/hr', done: true },
+                  { text: 'Missing forecast data remains explicitly unknown (not safe)', done: true },
+                  { text: 'Automated test suite passing (18/18 tests)', done: true },
                 ].map((item, idx) => (
                   <div key={idx} className="flex items-center gap-2.5 text-xs">
                     {item.done ? (
@@ -501,7 +659,7 @@ export default function App() {
             <div className="mt-6 p-3 rounded-lg bg-slate-900 text-slate-100 text-xs flex items-center justify-between">
               <div>
                 <span className="text-slate-400 block text-[10px] uppercase font-mono">Next Milestone</span>
-                <span className="font-semibold text-teal-300">Phase 3: Weather Checkpoints & ETAs</span>
+                <span className="font-semibold text-teal-300">Phase 4: Risk & Load Engine</span>
               </div>
               <ArrowRight className="w-4 h-4 text-teal-400" />
             </div>
@@ -517,8 +675,8 @@ export default function App() {
             {[
               { num: '01', title: 'Plan & Scaffold', status: 'Completed', color: 'border-emerald-500 bg-emerald-50/40 text-emerald-700' },
               { num: '02', title: 'Routing Engine', status: 'Completed', color: 'border-emerald-500 bg-emerald-50/40 text-emerald-700' },
-              { num: '03', title: 'Weather & ETAs', status: 'Next', color: 'border-teal-500 bg-teal-50/40 text-teal-700' },
-              { num: '04', title: 'Risk Engine', status: 'Queued', color: 'border-slate-200 bg-slate-50 text-slate-600' },
+              { num: '03', title: 'Weather & ETAs', status: 'Completed', color: 'border-emerald-500 bg-emerald-50/40 text-emerald-700' },
+              { num: '04', title: 'Risk Engine', status: 'Next', color: 'border-teal-500 bg-teal-50/40 text-teal-700' },
               { num: '05', title: 'Dashboard & Heatmap', status: 'Queued', color: 'border-slate-200 bg-slate-50 text-slate-600' },
               { num: '06', title: 'Audit & Deploy', status: 'Queued', color: 'border-slate-200 bg-slate-50 text-slate-600' },
             ].map((phase) => (
