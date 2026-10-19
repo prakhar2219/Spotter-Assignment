@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { checkBackendHealth, previewRoutes } from './services/api';
+import { checkBackendHealth, previewRoutes, planTrip } from './services/api';
 import {
   Activity,
   CheckCircle2,
@@ -126,7 +126,7 @@ export default function App() {
 
     const isoDeparture = new Date(departureInput).toISOString();
 
-    const res = await previewRoutes({
+    const res = await planTrip({
       origin: originInput,
       destination: destInput,
       provider: providerInput,
@@ -186,7 +186,7 @@ export default function App() {
                 {healthStatus.loading
                   ? 'Checking...'
                   : healthStatus.connected
-                  ? 'API Connected (Phase 5 Active)'
+                  ? 'API Connected (Phase 6 Active)'
                   : 'API Offline'}
               </span>
               {healthStatus.latencyMs !== null && healthStatus.connected && (
@@ -218,17 +218,15 @@ export default function App() {
           <div className="max-w-3xl space-y-3 relative z-10">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-teal-50 border border-teal-200 text-teal-800 text-xs font-semibold">
               <Sparkles className="w-3.5 h-3.5 text-teal-600" />
-              Phase 5 Milestone — Strict Lexicographical Recommendation Engine
+              Phase 6 Milestone — Unified End-to-End Planning Pipeline (POST /api/routes/plan/)
             </div>
             
             <h1 className="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
-              Deterministic Route Risk Metrics & Recommendation
+              Production Truck Routing & Weather Planning Pipeline
             </h1>
             
             <p className="text-slate-600 text-sm sm:text-base leading-relaxed">
-              Compares up to three genuine alternative routes using an uncompromising 4-tier lexicographical safety hierarchy: 
-              <strong> Fewest Severe Miles &rarr; Fewest High Miles &rarr; Lowest Distance-Weighted Risk &rarr; Shortest Duration</strong>. 
-              Any route encountering a No Travel checkpoint is strictly excluded.
+              Executes routing, road-geometry checkpoint generation, Open-Meteo time-aware forecasts, load-dependent safety boundary evaluation, and strict 4-tier lexicographical recommendation in a single, robust transaction.
             </p>
           </div>
         </div>
@@ -372,6 +370,21 @@ export default function App() {
             {/* Results Display */}
             {previewResult && (
               <div className="mt-6 space-y-6">
+                {/* Warnings Banner */}
+                {previewResult.warnings && previewResult.warnings.length > 0 && (
+                  <div className="p-3.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-xs space-y-1">
+                    <div className="flex items-center gap-1.5 font-bold text-amber-800">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>Pipeline Corridor Notices ({previewResult.warnings.length})</span>
+                    </div>
+                    <ul className="list-disc list-inside space-y-0.5 text-[11px] text-amber-800/90 pl-1">
+                      {previewResult.warnings.map((w, idx) => (
+                        <li key={idx}>{w}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
                 {/* Geocoding resolved banner */}
                 <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
@@ -776,7 +789,7 @@ export default function App() {
               <div className="space-y-2.5 pt-2">
                 <div className="flex items-center justify-between text-xs py-1.5 border-b border-slate-100">
                   <span className="text-slate-500">Current Phase:</span>
-                  <span className="font-semibold text-teal-700">Phase 5 (Recommendation Engine)</span>
+                  <span className="font-semibold text-teal-700">Phase 6 (POST /api/routes/plan/)</span>
                 </div>
                 <div className="flex items-center justify-between text-xs py-1.5 border-b border-slate-100">
                   <span className="text-slate-500">Response Latency:</span>
@@ -786,7 +799,7 @@ export default function App() {
                 </div>
                 <div className="flex items-center justify-between text-xs py-1.5 border-b border-slate-100">
                   <span className="text-slate-500">Automated Tests:</span>
-                  <span className="text-emerald-700 font-semibold font-mono">35 / 35 Passing (100%)</span>
+                  <span className="text-emerald-700 font-semibold font-mono">51 / 51 Passing (100%)</span>
                 </div>
                 <div className="flex items-center justify-between text-xs py-1.5">
                   <span className="text-slate-500">CORS Allowed Origin:</span>

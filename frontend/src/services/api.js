@@ -99,3 +99,68 @@ export async function previewRoutes({
     };
   }
 }
+
+/**
+ * Request end-to-end trip planning analysis from POST /api/routes/plan/.
+ * Executes full routing, time-aware checkpoint generation, Open-Meteo weather forecasts,
+ * load-dependent risk evaluation, and strict 4-tier lexicographical recommendation.
+ * @param {Object} params
+ * @param {string|Array<number>} params.origin - Place query or [lon, lat]
+ * @param {string|Array<number>} params.destination - Place query or [lon, lat]
+ * @param {string} params.departureTime - ISO 8601 departure timestamp with explicit timezone
+ * @param {number} params.loadWeightLb - Truck gross cargo load weight in pounds
+ * @param {number} params.samplingIntervalMiles - Checkpoint interval (10, 25, 50)
+ * @param {string} [params.provider] - Optional provider override ('openrouteservice', 'mapbox', 'osrm')
+ * @param {number} [params.maxAlternatives=3] - Target alternative count
+ * @returns {Promise<{success: boolean, data: any, error: string|null}>}
+ */
+export async function planTrip({
+  origin,
+  destination,
+  departureTime,
+  loadWeightLb,
+  samplingIntervalMiles = 25,
+  provider,
+  maxAlternatives = 3,
+}) {
+  try {
+    const payload = {
+      origin,
+      destination,
+      departure_time: departureTime,
+      load_weight_lb: loadWeightLb,
+      sampling_interval_miles: samplingIntervalMiles,
+      max_alternatives: maxAlternatives,
+    };
+    if (provider) {
+      payload.provider = provider;
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/routes/plan/`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    }
+
+    return {
+      success: true,
+      data,
+      error: null,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      data: null,
+      error: err.message || 'Failed to execute trip plan',
+    };
+  }
+}
+

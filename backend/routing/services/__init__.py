@@ -12,6 +12,7 @@ from .exceptions import (
     NoRoutesFoundError,
     InvalidTripInputError,
 )
+from .planner import plan_trip, validate_departure_time_with_timezone
 
 __all__ = [
     "BaseRoutingProvider",
@@ -22,6 +23,8 @@ __all__ = [
     "OSRMProvider",
     "get_routing_provider",
     "preview_routes",
+    "plan_trip",
+    "validate_departure_time_with_timezone",
     "RoutingError",
     "MissingApiKeyError",
     "GeocodingError",
@@ -32,3 +35,4 @@ __all__ = [
     "METERS_TO_MILES",
     "format_duration",
 ]
+

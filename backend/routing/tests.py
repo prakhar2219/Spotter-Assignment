@@ -62,7 +62,7 @@ class HealthCheckTests(TestCase):
         self.assertEqual(data.get('status'), 'healthy')
         self.assertEqual(data.get('service'), 'spotter-weather-routing-backend')
         self.assertIn('timestamp', data)
-        self.assertEqual(data.get('phase'), 5)
+        self.assertEqual(data.get('phase'), 6)
 
     def test_cors_headers_allowed_origin(self):
         url = reverse('health-check')
@@ -781,11 +781,13 @@ class RouteRecommendationApiIntegrationTests(TestCase):
         def fake_enrich(cps):
             for cp in cps:
                 cp.weather = NormalizedWeather(
-                    timestamp="2026-10-20T10:00:00+00:00",
                     wind_speed_mph=15.0,
                     precipitation_in_hr=0.01,
                     snowfall_in_hr=0.0,
-                    temperature_fahrenheit=65.0,
+                    temperature_f=65.0,
+                    weather_code=0,
+                    weather_description="Clear sky",
+                    forecast_time="2026-10-20T10:00:00+00:00",
                     is_available=True,
                 )
         mock_enrich.side_effect = fake_enrich
@@ -816,5 +818,363 @@ class RouteRecommendationApiIntegrationTests(TestCase):
             self.assertIn("high_miles", metrics)
             self.assertIn("distance_weighted_average_risk", metrics)
             self.assertIn("is_eligible", metrics)
+
+
+# =========================================================================
+# PHASE 6: END-TO-END PLANNING ENDPOINT (POST /api/routes/plan/) TESTS
+# =========================================================================
+
+class PlanEndpointSuccessTests(TestCase):
+    """
+    Verifies full end-to-end execution of POST /api/routes/plan/
+    and complete schema serialization.
+    """
+    def setUp(self):
+        self.client = APIClient()
+        self.url = reverse('routes-plan')
+
+    @patch('routing.services.planner.get_routing_provider')
+    @patch('routing.services.planner.enrich_checkpoints_with_weather')
+    def test_plan_endpoint_complete_pipeline_success(self, mock_enrich, mock_get_provider):
+        mock_provider = MagicMock()
+        mock_provider.provider_name = "mock_provider"
+        mock_provider.geocode.side_effect = [
+            ResolvedLocation("Philadelphia, PA", "Philadelphia, PA, USA", [-75.1635, 39.9527]),
+            ResolvedLocation("Baltimore, MD", "Baltimore, MD, USA", [-76.6108, 39.2909]),
+        ]
+        mock_provider.get_routes.return_value = [
+            NormalizedRoute(
+                id="route-1",
+                name="Route 1 (I-95 S)",
+                distance_meters=157000.0,
+                distance_miles=97.56,
+                duration_seconds=7200.0,
+                duration_hours=2.0,
+                duration_formatted="2h 00m",
+                summary="I-95 S",
+                geometry={
+                    "type": "LineString",
+                    "coordinates": [[-75.1635, 39.9527], [-75.8, 39.6], [-76.6108, 39.2909]]
+                },
+            ),
+            NormalizedRoute(
+                id="route-2",
+                name="Route 2 (US-1 S)",
+                distance_meters=170000.0,
+                distance_miles=105.63,
+                duration_seconds=8400.0,
+                duration_hours=2.33,
+                duration_formatted="2h 20m",
+                summary="US-1 S",
+                geometry={
+                    "type": "LineString",
+                    "coordinates": [[-75.1635, 39.9527], [-75.9, 39.7], [-76.6108, 39.2909]]
+                },
+            )
+        ]
+        mock_get_provider.return_value = mock_provider
+
+        def fake_enrich(cps):
+            for cp in cps:
+                cp.weather = NormalizedWeather(
+                    wind_speed_mph=18.0,
+                    precipitation_in_hr=0.02,
+                    snowfall_in_hr=0.0,
+                    temperature_f=65.0,
+                    weather_code=0,
+                    weather_description="Clear sky",
+                    forecast_time="2026-10-20T10:00:00+00:00",
+                    is_available=True,
+                )
+        mock_enrich.side_effect = fake_enrich
+
+        payload = {
+            "origin": "Philadelphia, PA",
+            "destination": "Baltimore, MD",
+            "departure_time": "2026-10-20T10:00:00Z",
+            "load_weight_lb": 42000,
+            "sampling_interval_miles": 25,
+        }
+
+        response = self.client.post(self.url, payload, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+        data = response.json()
+
+        # 1. Status & Trip metadata
+        self.assertEqual(data.get("status"), "success")
+        self.assertIn("trip", data)
+        trip = data["trip"]
+        self.assertEqual(trip["departure_time"], "2026-10-20T10:00:00+00:00")
+        self.assertEqual(trip["load_weight_lb"], 42000.0)
+        self.assertEqual(trip["sampling_interval_miles"], 25)
+        self.assertEqual(trip["provider"], "mock_provider")
+        self.assertIn("requested_at", trip)
+        self.assertIn("coordinate_convention", trip)
+
+        # 2. Routes
+        self.assertEqual(data.get("routes_count"), 2)
+        self.assertEqual(len(data.get("routes")), 2)
+        r1 = data["routes"][0]
+        self.assertIn("geometry", r1)
+        self.assertIn("distance_miles", r1)
+        self.assertIn("duration_formatted", r1)
+        self.assertIn("checkpoints", r1)
+        self.assertTrue(len(r1["checkpoints"]) >= 2)
+
+        # Checkpoints schema
+        cp0 = r1["checkpoints"][0]
+        self.assertIn("cumulative_distance_miles", cp0)
+        self.assertIn("estimated_arrival_time", cp0)
+        self.assertIn("coordinates", cp0)
+        self.assertIn("weather", cp0)
+        self.assertIn("risk", cp0)
+        self.assertIn("overall_risk", cp0["risk"])
+
+        # Metrics schema
+        self.assertIn("metrics", r1)
+        m = r1["metrics"]
+        self.assertIn("severe_miles", m)
+        self.assertIn("high_miles", m)
+        self.assertIn("distance_weighted_average_risk", m)
+        self.assertIn("is_eligible", m)
+        self.assertTrue(m["is_eligible"])
+
+        # 3. Recommendation schema
+        self.assertIn("recommendation", data)
+        rec = data["recommendation"]
+        self.assertEqual(rec["status"], "recommended")
+        self.assertIsNotNone(rec["recommended_route_id"])
+        self.assertIn("decision_criterion", rec)
+        self.assertIn("explanation", rec)
+        self.assertIn("tradeoffs_summary", rec)
+
+        # 4. Warnings and Units
+        self.assertIn("warnings", data)
+        self.assertIn("units", data)
+
+
+class PlanEndpointInputValidationTests(TestCase):
+    """
+    Tests input validation and HTTP 400 error responses for POST /api/routes/plan/.
+    """
+    def setUp(self):
+        self.client = APIClient()
+        self.url = reverse('routes-plan')
+        self.valid_payload = {
+            "origin": "Philadelphia, PA",
+            "destination": "Baltimore, MD",
+            "departure_time": "2026-10-20T10:00:00Z",
+            "load_weight_lb": 40000,
+            "sampling_interval_miles": 25,
+        }
+
+    def test_missing_origin(self):
+        payload = dict(self.valid_payload)
+        del payload["origin"]
+        response = self.client.post(self.url, payload, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json().get("error"), "invalid_input")
+        self.assertIn("'origin' field is required", response.json().get("message", ""))
+
+    def test_missing_destination(self):
+        payload = dict(self.valid_payload)
+        del payload["destination"]
+        response = self.client.post(self.url, payload, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json().get("error"), "invalid_input")
+        self.assertIn("'destination' field is required", response.json().get("message", ""))
+
+    def test_missing_departure_time(self):
+        payload = dict(self.valid_payload)
+        del payload["departure_time"]
+        response = self.client.post(self.url, payload, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json().get("error"), "invalid_input")
+        self.assertIn("'departure_time' is required", response.json().get("message", ""))
+
+    def test_naive_departure_time_without_timezone_rejected(self):
+        # Naive datetime without timezone offset (e.g. 2026-10-20T10:00:00) MUST return 400
+        payload = dict(self.valid_payload)
+        payload["departure_time"] = "2026-10-20T10:00:00"
+        response = self.client.post(self.url, payload, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json().get("error"), "invalid_input")
+        self.assertIn("explicit timezone offset", response.json().get("message", ""))
+
+    def test_invalid_departure_time_string_rejected(self):
+        payload = dict(self.valid_payload)
+        payload["departure_time"] = "invalid-date-not-iso"
+        response = self.client.post(self.url, payload, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json().get("error"), "invalid_input")
+
+    def test_missing_load_weight_lb(self):
+        payload = dict(self.valid_payload)
+        del payload["load_weight_lb"]
+        response = self.client.post(self.url, payload, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json().get("error"), "invalid_input")
+        self.assertIn("load_weight_lb", response.json().get("message", ""))
+
+    def test_negative_load_weight_lb(self):
+        payload = dict(self.valid_payload)
+        payload["load_weight_lb"] = -500.0
+        response = self.client.post(self.url, payload, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json().get("error"), "invalid_input")
+        self.assertIn("non-negative", response.json().get("message", ""))
+
+    def test_invalid_sampling_interval(self):
+        payload = dict(self.valid_payload)
+        payload["sampling_interval_miles"] = 15  # Only 10, 25, 50 valid
+        response = self.client.post(self.url, payload, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json().get("error"), "invalid_input")
+        self.assertIn("sampling_interval_miles", response.json().get("message", ""))
+
+    def test_non_dictionary_payload_rejected(self):
+        response = self.client.post(self.url, ["not", "a", "dict"], format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json().get("error"), "invalid_payload")
+
+
+class PlanEndpointProviderFailuresTests(TestCase):
+    """
+    Tests upstream provider failures returning proper HTTP status codes:
+    502 (ProviderUnavailableError), 429 (RateLimitError), 503 (MissingApiKeyError), 404 (GeocodingError / NoRoutesFoundError).
+    """
+    def setUp(self):
+        self.client = APIClient()
+        self.url = reverse('routes-plan')
+        self.payload = {
+            "origin": "Philadelphia, PA",
+            "destination": "Baltimore, MD",
+            "departure_time": "2026-10-20T10:00:00Z",
+            "load_weight_lb": 40000,
+            "sampling_interval_miles": 25,
+        }
+
+    @patch('routing.services.planner.get_routing_provider')
+    def test_provider_unavailable_returns_502(self, mock_get_provider):
+        mock_provider = MagicMock()
+        mock_provider.geocode.side_effect = ProviderUnavailableError("ORS connection timed out.")
+        mock_get_provider.return_value = mock_provider
+
+        response = self.client.post(self.url, self.payload, format='json')
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json().get("error"), "upstream_provider_unavailable")
+
+    @patch('routing.services.planner.get_routing_provider')
+    def test_rate_limit_exceeded_returns_429(self, mock_get_provider):
+        mock_provider = MagicMock()
+        mock_provider.geocode.side_effect = RateLimitError("Rate limit exceeded for provider.")
+        mock_get_provider.return_value = mock_provider
+
+        response = self.client.post(self.url, self.payload, format='json')
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.json().get("error"), "rate_limit_exceeded")
+
+    @patch('routing.services.planner.get_routing_provider')
+    def test_missing_api_key_returns_503(self, mock_get_provider):
+        mock_get_provider.side_effect = MissingApiKeyError("ROUTING_API_KEY required.")
+
+        response = self.client.post(self.url, self.payload, format='json')
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json().get("error"), "missing_credentials")
+
+    @patch('routing.services.planner.get_routing_provider')
+    def test_geocoding_failure_returns_404(self, mock_get_provider):
+        mock_provider = MagicMock()
+        mock_provider.geocode.side_effect = GeocodingError("Could not resolve location: Atlantis")
+        mock_get_provider.return_value = mock_provider
+
+        response = self.client.post(self.url, self.payload, format='json')
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json().get("error"), "geocoding_failed")
+
+    @patch('routing.services.planner.get_routing_provider')
+    def test_no_routes_found_returns_404(self, mock_get_provider):
+        mock_provider = MagicMock()
+        mock_provider.geocode.side_effect = [
+            ResolvedLocation("Hawaii", "Honolulu, HI", [-157.8583, 21.3069]),
+            ResolvedLocation("California", "San Francisco, CA", [-122.4194, 37.7749]),
+        ]
+        mock_provider.get_routes.return_value = []
+        mock_get_provider.return_value = mock_provider
+
+        response = self.client.post(self.url, self.payload, format='json')
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json().get("error"), "no_routes_found")
+
+
+class PlanEndpointUnavailableWeatherAndSafetyTests(TestCase):
+    """
+    Engineering rule: Never present missing weather data as safe weather.
+    If weather is unavailable for checkpoints, route must be marked ineligible,
+    warnings populated, and route excluded from recommendation.
+    """
+    def setUp(self):
+        self.client = APIClient()
+        self.url = reverse('routes-plan')
+
+    @patch('routing.services.planner.get_routing_provider')
+    @patch('routing.services.planner.enrich_checkpoints_with_weather')
+    def test_unavailable_weather_marks_route_ineligible_and_adds_warning(self, mock_enrich, mock_get_provider):
+        mock_provider = MagicMock()
+        mock_provider.provider_name = "mock_provider"
+        mock_provider.geocode.side_effect = [
+            ResolvedLocation("A", "Loc A", [-75.0, 40.0]),
+            ResolvedLocation("B", "Loc B", [-74.0, 40.0]),
+        ]
+        mock_provider.get_routes.return_value = [
+            NormalizedRoute(
+                id="route-1",
+                name="Route 1",
+                distance_meters=100000.0,
+                distance_miles=62.14,
+                duration_seconds=3600.0,
+                duration_hours=1.0,
+                duration_formatted="1h 00m",
+                summary="Route 1",
+                geometry={"type": "LineString", "coordinates": [[-75.0, 40.0], [-74.0, 40.0]]},
+            )
+        ]
+        mock_get_provider.return_value = mock_provider
+
+        # Checkpoints with unavailable weather
+        def fake_enrich_unavailable(cps):
+            for cp in cps:
+                cp.weather = NormalizedWeather.unavailable(
+                    status="outside_forecast_horizon",
+                    error_message="Forecast beyond horizon",
+                )
+        mock_enrich.side_effect = fake_enrich_unavailable
+
+        payload = {
+            "origin": "Loc A",
+            "destination": "Loc B",
+            "departure_time": "2026-10-20T10:00:00Z",
+            "load_weight_lb": 35000,
+            "sampling_interval_miles": 25,
+        }
+
+        response = self.client.post(self.url, payload, format='json')
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+
+        # Route should be ineligible
+        r1 = data["routes"][0]
+        self.assertFalse(r1["metrics"]["is_eligible"])
+        self.assertTrue(r1["metrics"]["has_unknown"])
+
+        # Recommendation should be no_eligible_routes
+        rec = data["recommendation"]
+        self.assertEqual(rec["status"], "no_eligible_routes")
+        self.assertIsNone(rec["recommended_route_id"])
+
+        # Warnings should contain an explicit notice
+        warnings = data.get("warnings", [])
+        self.assertTrue(any("Weather forecast unavailable" in w for w in warnings))
+
 
 
