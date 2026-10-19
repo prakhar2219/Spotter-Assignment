@@ -2,7 +2,6 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
 from django.utils import timezone
-from datetime import datetime
 
 from .services import (
     preview_routes,
@@ -20,6 +19,9 @@ from .checkpoints import (
 from .weather import (
     enrich_checkpoints_with_weather,
 )
+from .risk import (
+    evaluate_checkpoint_risk,
+)
 
 @api_view(['GET'])
 def health_check(request):
@@ -31,7 +33,7 @@ def health_check(request):
         "status": "healthy",
         "service": "spotter-weather-routing-backend",
         "timestamp": timezone.now().isoformat(),
-        "phase": 3,
+        "phase": 4,
     })
 
 @api_view(['POST'])
@@ -39,16 +41,13 @@ def route_preview(request):
     """
     POST /api/routes/preview/
     Accepts:
-        - origin: string (place name) or list [lon, lat]
-        - destination: string (place name) or list [lon, lat]
+        - origin: string or [lon, lat]
+        - destination: string or [lon, lat]
         - provider (optional): 'openrouteservice', 'mapbox', or 'osrm'
         - max_alternatives (optional, default 3, max 3)
         - departure_time (optional): ISO 8601 string
+        - load_weight_lb (optional, default 40,000 lb)
         - sampling_interval_miles (optional): 10, 25, or 50
-    Returns:
-        - origin and destination with resolved coordinates
-        - up to 3 genuine alternative routes with normalized geometry, distances, durations,
-          and time-aware checkpoints with normalized weather forecasts when departure_time is provided.
     """
     payload = request.data
     if not isinstance(payload, dict):
@@ -63,11 +62,17 @@ def route_preview(request):
     raw_max_alt = payload.get("max_alternatives", 3)
     departure_time = payload.get("departure_time")
     raw_interval = payload.get("sampling_interval_miles", 25)
+    raw_load = payload.get("load_weight_lb", 40000.0)
 
     try:
         max_alternatives = min(max(int(raw_max_alt), 1), 3)
     except (TypeError, ValueError):
         max_alternatives = 3
+
+    try:
+        load_weight_lb = max(0.0, float(raw_load))
+    except (TypeError, ValueError):
+        load_weight_lb = 40000.0
 
     try:
         interval_miles = int(raw_interval)
@@ -102,8 +107,9 @@ def route_preview(request):
             provider_name=provider_name,
         )
 
-        # If departure_time is provided, sample checkpoints and enrich with weather
+        # If departure_time is provided, sample checkpoints and enrich with weather & risk
         if departure_time:
+            result["load_weight_lb"] = load_weight_lb
             for rt in result.get("routes", []):
                 coords = rt.get("geometry", {}).get("coordinates", [])
                 duration_s = rt.get("duration_seconds", 0.0)
@@ -115,8 +121,20 @@ def route_preview(request):
                         interval_miles=interval_miles,
                     )
                     enrich_checkpoints_with_weather(checkpoints)
-                    rt["checkpoints_count"] = len(checkpoints)
-                    rt["checkpoints"] = [cp.to_dict() for cp in checkpoints]
+                    
+                    cp_dicts = []
+                    has_no_travel = False
+                    for cp in checkpoints:
+                        risk_eval = evaluate_checkpoint_risk(cp.weather, load_weight_lb)
+                        if risk_eval.is_no_travel:
+                            has_no_travel = True
+                        cp_d = cp.to_dict()
+                        cp_d["risk"] = risk_eval.to_dict()
+                        cp_dicts.append(cp_d)
+
+                    rt["checkpoints_count"] = len(cp_dicts)
+                    rt["checkpoints"] = cp_dicts
+                    rt["has_no_travel"] = has_no_travel
                 except Exception as cp_err:
                     rt["checkpoints_error"] = str(cp_err)
                     rt["checkpoints"] = []
@@ -163,11 +181,12 @@ def route_preview(request):
 def route_checkpoints(request):
     """
     POST /api/routes/checkpoints/
-    Generates time-aware checkpoints and retrieves hourly weather forecasts.
+    Generates time-aware checkpoints, retrieves weather forecasts, and classifies risks.
     Accepts:
         - route_coordinates: list of [lon, lat] points (at least 2 points)
-        - departure_time: ISO 8601 string (e.g. '2026-10-20T08:00:00Z')
-        - duration_seconds: float (route duration in seconds)
+        - departure_time: ISO 8601 string
+        - duration_seconds: float
+        - load_weight_lb: float (default: 40000.0)
         - sampling_interval_miles: 10, 25, or 50 (default: 25)
         - include_weather: bool (default: True)
     """
@@ -182,6 +201,7 @@ def route_checkpoints(request):
     departure_time = payload.get("departure_time")
     duration_s = payload.get("duration_seconds")
     raw_interval = payload.get("sampling_interval_miles", 25)
+    raw_load = payload.get("load_weight_lb", 40000.0)
     include_weather = payload.get("include_weather", True)
 
     if not coords or not isinstance(coords, list) or len(coords) < 2:
@@ -203,6 +223,11 @@ def route_checkpoints(request):
         )
 
     try:
+        load_weight_lb = max(0.0, float(raw_load))
+    except (TypeError, ValueError):
+        load_weight_lb = 40000.0
+
+    try:
         interval_miles = int(raw_interval)
         if interval_miles not in VALID_SAMPLING_INTERVALS_MILES:
             return Response(
@@ -214,7 +239,7 @@ def route_checkpoints(request):
             )
     except (TypeError, ValueError):
         return Response(
-            {"error": "invalid_interval", "message": f"sampling_interval_miles must be an integer (10, 25, or 50)."},
+            {"error": "invalid_interval", "message": "sampling_interval_miles must be an integer (10, 25, or 50)."},
             status=status.HTTP_400_BAD_REQUEST
         )
 
@@ -229,15 +254,24 @@ def route_checkpoints(request):
         if include_weather:
             enrich_checkpoints_with_weather(checkpoints)
 
+        checkpoint_results = []
+        for cp in checkpoints:
+            cp_dict = cp.to_dict()
+            risk_eval = evaluate_checkpoint_risk(cp.weather, load_weight_lb)
+            cp_dict["risk"] = risk_eval.to_dict()
+            checkpoint_results.append(cp_dict)
+
         return Response({
             "status": "success",
             "sampling_interval_miles": interval_miles,
-            "checkpoints_count": len(checkpoints),
-            "checkpoints": [cp.to_dict() for cp in checkpoints],
+            "load_weight_lb": load_weight_lb,
+            "checkpoints_count": len(checkpoint_results),
+            "checkpoints": checkpoint_results,
             "units": {
                 "wind_speed": "mph",
                 "precipitation": "in/hr",
                 "snowfall": "in/hr",
+                "load_weight": "lb",
                 "temperature": "fahrenheit",
                 "cumulative_distance": "miles",
                 "segment_distance": "miles"
