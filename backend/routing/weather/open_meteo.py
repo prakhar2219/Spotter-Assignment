@@ -185,3 +185,123 @@ class OpenMeteoWeatherProvider:
             is_available=True,
             status="available",
         )
+
+    def generate_timeline_forecasts(
+        self,
+        hourly_data: Optional[Dict[str, Any]],
+        reference_time_iso: str,
+        max_offset_hours: int = 48,
+        load_weight_lb: float = 0.0,
+    ) -> List[Dict[str, Any]]:
+        """
+        Generates forecast records for hourly offsets [0..max_offset_hours]
+        relative to reference_time_iso.
+        Pre-evaluates normalized values and risk classifications for each hour.
+        Never fabricates data outside the provider's active forecast range.
+        """
+        from datetime import timedelta
+        from routing.risk.evaluator import evaluate_checkpoint_risk
+
+        if not reference_time_iso:
+            return []
+
+        try:
+            clean_ref = reference_time_iso.strip()
+            if clean_ref.endswith("Z"):
+                clean_ref = clean_ref[:-1] + "+00:00"
+            ref_dt = datetime.fromisoformat(clean_ref)
+            if ref_dt.tzinfo is None:
+                ref_dt = ref_dt.replace(tzinfo=timezone.utc)
+            else:
+                ref_dt = ref_dt.astimezone(timezone.utc)
+        except Exception:
+            ref_dt = datetime.now(timezone.utc)
+
+        times = hourly_data.get("time", []) if hourly_data else []
+        winds = hourly_data.get("wind_speed_10m", []) if hourly_data else []
+        precips = hourly_data.get("precipitation", []) if hourly_data else []
+        snows = hourly_data.get("snowfall", []) if hourly_data else []
+        temps = hourly_data.get("temperature_2m", []) if hourly_data else []
+        codes = hourly_data.get("weather_code", []) if hourly_data else []
+
+        parsed_times: List[Tuple[int, datetime]] = []
+        for idx, t_str in enumerate(times):
+            try:
+                t_dt = datetime.fromisoformat(t_str).replace(tzinfo=timezone.utc)
+                parsed_times.append((idx, t_dt))
+            except Exception:
+                continue
+
+        timeline: List[Dict[str, Any]] = []
+
+        for h in range(max_offset_hours + 1):
+            target_dt = ref_dt + timedelta(hours=h)
+
+            best_idx: Optional[int] = None
+            min_diff_sec: float = float("inf")
+
+            for idx, t_dt in parsed_times:
+                diff = abs((target_dt - t_dt).total_seconds())
+                if diff < min_diff_sec:
+                    min_diff_sec = diff
+                    best_idx = idx
+
+            # If within 2 hours of a forecasted slot and data exists
+            if (
+                best_idx is not None
+                and min_diff_sec <= 7200
+                and best_idx < len(winds)
+                and winds[best_idx] is not None
+            ):
+                w_mph = round(float(winds[best_idx]), 1) if winds[best_idx] is not None else 0.0
+                r_in_hr = round(float(precips[best_idx]), 2) if (best_idx < len(precips) and precips[best_idx] is not None) else 0.0
+                s_in_hr = round(float(snows[best_idx]), 2) if (best_idx < len(snows) and snows[best_idx] is not None) else 0.0
+                t_f = round(float(temps[best_idx]), 1) if (best_idx < len(temps) and temps[best_idx] is not None) else None
+                c_code = int(codes[best_idx]) if (best_idx < len(codes) and codes[best_idx] is not None) else None
+
+                weather_dict = {
+                    "wind_speed_mph": w_mph,
+                    "precipitation_in_hr": r_in_hr,
+                    "snowfall_in_hr": s_in_hr,
+                    "temperature_f": t_f,
+                    "weather_code": c_code,
+                    "is_available": True,
+                }
+
+                risk_eval = evaluate_checkpoint_risk(weather_dict, load_weight_lb=load_weight_lb)
+
+                timeline.append({
+                    "offset_hours": h,
+                    "target_time": target_dt.isoformat(),
+                    "forecast_time": times[best_idx],
+                    "wind_speed_mph": w_mph,
+                    "precipitation_in_hr": r_in_hr,
+                    "snowfall_in_hr": s_in_hr,
+                    "temperature_f": t_f,
+                    "weather_code": c_code,
+                    "weather_description": get_wmo_description(c_code),
+                    "is_available": True,
+                    "overall_risk": risk_eval.overall_risk.value,
+                    "overall_score": risk_eval.overall_score,
+                    "governing_factor": risk_eval.governing_factor,
+                    "is_no_travel": risk_eval.is_no_travel,
+                })
+            else:
+                timeline.append({
+                    "offset_hours": h,
+                    "target_time": target_dt.isoformat(),
+                    "forecast_time": None,
+                    "wind_speed_mph": None,
+                    "precipitation_in_hr": None,
+                    "snowfall_in_hr": None,
+                    "temperature_f": None,
+                    "weather_code": None,
+                    "weather_description": "Forecast Unavailable",
+                    "is_available": False,
+                    "overall_risk": "Unknown",
+                    "overall_score": None,
+                    "governing_factor": "Unavailable forecast",
+                    "is_no_travel": False,
+                })
+
+        return timeline

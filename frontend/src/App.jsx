@@ -341,6 +341,8 @@ export default function App() {
                 routes={planResult?.routes || []}
                 selectedRouteId={selectedRouteId}
                 onSelectRoute={setSelectedRouteId}
+                timelineOffsetHours={timelineOffsetHours}
+                samplingIntervalMiles={samplingIntervalMiles}
               />
             </div>
 
@@ -349,6 +351,7 @@ export default function App() {
               <CheckpointTable
                 route={selectedRoute}
                 samplingIntervalMiles={samplingIntervalMiles}
+                timelineOffsetHours={timelineOffsetHours}
               />
             )}
           </div>

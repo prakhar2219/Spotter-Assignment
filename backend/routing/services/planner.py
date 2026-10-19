@@ -201,7 +201,15 @@ def plan_trip(
         )
 
         # Retrieve normalized hourly forecasts from Open-Meteo
-        enrich_checkpoints_with_weather(checkpoints)
+        try:
+            enrich_checkpoints_with_weather(
+                checkpoints,
+                reference_time_iso=normalized_dep_str,
+                load_weight_lb=load_lb,
+                include_timeline=True,
+            )
+        except TypeError:
+            enrich_checkpoints_with_weather(checkpoints)
 
         cp_results = []
         has_no_travel = False
@@ -263,6 +271,8 @@ def plan_trip(
             "origin": origin_loc.to_dict(),
             "destination": dest_loc.to_dict(),
             "departure_time": normalized_dep_str,
+            "forecast_reference_time": normalized_dep_str,
+            "forecast_horizon_hours": 48,
             "load_weight_lb": load_lb,
             "sampling_interval_miles": interval_mi,
             "provider": provider.provider_name,

@@ -5,8 +5,14 @@ import { RISK_LEVELS } from './RiskLegend';
 export default function CheckpointTable({
   route,
   samplingIntervalMiles = 25,
+  timelineOffsetHours = 0,
 }) {
   const [filterHazardousOnly, setFilterHazardousOnly] = useState(false);
+  const [viewSnapshot, setViewSnapshot] = useState(false);
+
+  // Sync snapshot toggle when timeline slider moves past 0
+  const isTimelineActive = timelineOffsetHours > 0;
+  const showSnapshotData = isTimelineActive && (viewSnapshot || true);
 
   if (!route || !route.checkpoints || route.checkpoints.length === 0) {
     return (
@@ -19,8 +25,10 @@ export default function CheckpointTable({
   const checkpoints = route.checkpoints;
   const filteredCheckpoints = filterHazardousOnly
     ? checkpoints.filter(cp => {
-        const score = cp.risk?.overall_score;
-        return (typeof score === 'number' && score > 0) || cp.risk?.overall_risk === 'Unknown';
+        const hourly = showSnapshotData ? cp.hourly_forecasts?.find(h => h.offset_hours === timelineOffsetHours) : null;
+        const r = hourly ? hourly : cp.risk;
+        const score = r?.overall_score;
+        return (typeof score === 'number' && score > 0) || r?.overall_risk === 'Unknown' || r?.overall_risk === 'No Travel';
       })
     : checkpoints;
 
@@ -33,6 +41,11 @@ export default function CheckpointTable({
           <h4 className="font-bold text-slate-900">
             Route Checkpoint Weather & Risk ({checkpoints.length} points @ {samplingIntervalMiles} mi)
           </h4>
+          {isTimelineActive && (
+            <span className="px-2 py-0.5 rounded bg-teal-100 text-teal-800 text-[10.5px] font-mono font-bold border border-teal-200">
+              +{timelineOffsetHours}h Snapshot
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-3">
@@ -58,7 +71,7 @@ export default function CheckpointTable({
               <th className="py-2.5 px-3">#</th>
               <th className="py-2.5 px-3">Checkpoint</th>
               <th className="py-2.5 px-3">Distance</th>
-              <th className="py-2.5 px-3">Estimated ETA</th>
+              <th className="py-2.5 px-3">{isTimelineActive ? 'Scheduled ETA' : 'Estimated ETA'}</th>
               <th className="py-2.5 px-3">Overall Risk</th>
               <th className="py-2.5 px-3">Wind & Cargo</th>
               <th className="py-2.5 px-3">Rain Rate</th>
@@ -69,8 +82,9 @@ export default function CheckpointTable({
           </thead>
           <tbody className="divide-y divide-slate-100 text-slate-700">
             {filteredCheckpoints.map((cp) => {
-              const w = cp.weather || {};
-              const r = cp.risk || {};
+              const hourly = isTimelineActive && cp.hourly_forecasts ? cp.hourly_forecasts.find(h => h.offset_hours === timelineOffsetHours) : null;
+              const w = hourly || cp.weather || {};
+              const r = hourly ? { overall_risk: hourly.overall_risk, overall_score: hourly.overall_score, governing_factor: hourly.governing_factor, is_no_travel: hourly.is_no_travel } : (cp.risk || {});
               const cond = r.conditions || {};
               const windCond = cond.wind || {};
               const rainCond = cond.rain || {};

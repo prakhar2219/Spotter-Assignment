@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useMemo, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { RISK_LEVELS } from './RiskLegend';
-import { Navigation, ZoomIn, Maximize2, Layers, AlertOctagon, HelpCircle, ShieldAlert } from 'lucide-react';
+import { Navigation, ZoomIn, Maximize2, Layers, Flame, Clock } from 'lucide-react';
 
 // Fix default Leaflet icon paths in bundlers (prevents 404s for default marker PNGs)
 delete L.Icon.Default.prototype._getIconUrl;
@@ -13,22 +13,69 @@ L.Icon.Default.mergeOptions({
 });
 
 /**
- * Creates accessible custom Leaflet markers for checkpoints.
- * Non-color differentiators:
- * - Origin: Green pin labeled 'A' (Origin)
- * - Destination: Red pin labeled 'B' (Destination)
- * - Low / Moderate / High / Severe: Numbered circular pins with risk colors
- * - No Travel: Octagon hazard shape with '✕' symbol and pulsing warning ring
- * - Unknown: Dashed border with '?' symbol
+ * Extracts active weather and risk data for a checkpoint at the given timeline offset.
+ * Uses pre-evaluated hourly forecasts from backend Open-Meteo series when offsetHours > 0.
  */
-function createCheckpointIcon(checkpoint) {
+function getActiveCheckpointData(checkpoint, offsetHours) {
+  if (
+    offsetHours > 0 &&
+    Array.isArray(checkpoint?.hourly_forecasts) &&
+    checkpoint.hourly_forecasts.length > 0
+  ) {
+    const hourly = checkpoint.hourly_forecasts.find((h) => h.offset_hours === offsetHours);
+    if (hourly) {
+      return {
+        isTimeline: true,
+        offsetHours,
+        forecastTime: hourly.forecast_time || hourly.target_time,
+        targetTime: hourly.target_time,
+        weather: {
+          wind_speed_mph: hourly.wind_speed_mph,
+          precipitation_in_hr: hourly.precipitation_in_hr,
+          snowfall_in_hr: hourly.snowfall_in_hr,
+          temperature_f: hourly.temperature_f,
+          weather_code: hourly.weather_code,
+          weather_description: hourly.weather_description,
+          is_available: hourly.is_available,
+        },
+        risk: {
+          overall_risk: hourly.overall_risk,
+          overall_score: hourly.overall_score,
+          governing_factor: hourly.governing_factor,
+          is_no_travel: hourly.is_no_travel,
+          conditions: {
+            wind: { risk: hourly.overall_risk },
+            rain: { risk: hourly.overall_risk },
+            snow: { risk: hourly.overall_risk },
+          },
+        },
+      };
+    }
+  }
+
+  // Fallback to time-aware arrival ETA data
+  return {
+    isTimeline: false,
+    offsetHours: 0,
+    forecastTime: checkpoint?.weather?.forecast_time,
+    targetTime: checkpoint?.estimated_arrival_time,
+    weather: checkpoint?.weather || {},
+    risk: checkpoint?.risk || {},
+  };
+}
+
+/**
+ * Creates accessible custom Leaflet markers for checkpoints.
+ */
+function createCheckpointIcon(checkpoint, offsetHours = 0) {
   const isOrigin = checkpoint.is_origin;
   const isDest = checkpoint.is_destination;
-  const risk = checkpoint.risk || {};
-  const riskLevel = risk.overall_risk || (checkpoint.weather?.is_available === false ? 'Unknown' : 'Low');
+  const activeData = getActiveCheckpointData(checkpoint, offsetHours);
+  const r = activeData.risk || {};
+  const riskLevel = r.overall_risk || (activeData.weather?.is_available === false ? 'Unknown' : 'Low');
   const riskInfo = RISK_LEVELS[riskLevel] || RISK_LEVELS['Low'];
-  const isNoTravel = risk.is_no_travel || riskLevel === 'No Travel';
-  const isUnknown = riskLevel === 'Unknown' || checkpoint.weather?.is_available === false;
+  const isNoTravel = r.is_no_travel || riskLevel === 'No Travel';
+  const isUnknown = riskLevel === 'Unknown' || activeData.weather?.is_available === false;
 
   if (isOrigin) {
     return L.divIcon({
@@ -64,7 +111,7 @@ function createCheckpointIcon(checkpoint) {
     });
   }
 
-  // 1. No Travel Checkpoint: Octagonal hazard shape with ✕ symbol & pulse ring (distinct non-color shape)
+  // 1. No Travel: Octagon hazard shape with ✕ symbol & pulse ring (accessible non-color shape)
   if (isNoTravel) {
     return L.divIcon({
       className: 'custom-map-icon',
@@ -83,7 +130,7 @@ function createCheckpointIcon(checkpoint) {
     });
   }
 
-  // 2. Unknown Weather Checkpoint: Dashed border with '?' icon (distinct from Low risk)
+  // 2. Unknown Weather: Dashed border with '?' icon (distinct from Low risk)
   if (isUnknown) {
     return L.divIcon({
       className: 'custom-map-icon',
@@ -121,9 +168,10 @@ function createCheckpointIcon(checkpoint) {
 /**
  * Builds HTML popup with full weather details, ETAs, and risk evaluation.
  */
-function renderPopupHtml(checkpoint) {
-  const w = checkpoint.weather || {};
-  const r = checkpoint.risk || {};
+function renderPopupHtml(checkpoint, offsetHours = 0) {
+  const activeData = getActiveCheckpointData(checkpoint, offsetHours);
+  const w = activeData.weather || {};
+  const r = activeData.risk || {};
   const cond = r.conditions || {};
   const wind = cond.wind || {};
   const rain = cond.rain || {};
@@ -146,6 +194,21 @@ function renderPopupHtml(checkpoint) {
     }
   }
 
+  let snapshotTimeFormatted = null;
+  if (activeData.isTimeline && activeData.targetTime) {
+    try {
+      snapshotTimeFormatted = new Date(activeData.targetTime).toLocaleTimeString([], {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch {
+      snapshotTimeFormatted = activeData.targetTime;
+    }
+  }
+
   const badgeBg = isNoTravel
     ? '#ffe4e6; color: #9f1239; border-color: #f43f5e'
     : isUnknown
@@ -159,7 +222,7 @@ function renderPopupHtml(checkpoint) {
     : '#ecfdf5; color: #065f46; border-color: #10b981';
 
   return `
-    <div style="font-family: inherit; font-size: 12px; line-height: 1.4; color: #1e293b; padding: 2px; min-width: 230px;">
+    <div style="font-family: inherit; font-size: 12px; line-height: 1.4; color: #1e293b; padding: 2px; min-width: 240px;">
       <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; margin-bottom: 6px;">
         <div>
           <span style="font-size: 10px; font-weight: bold; color: #64748b; text-transform: uppercase;">Checkpoint #${checkpoint.index}</span>
@@ -170,16 +233,23 @@ function renderPopupHtml(checkpoint) {
         </span>
       </div>
 
-      <div style="margin-bottom: 6px;">
+      ${activeData.isTimeline ? `
+        <div style="background: #f0fdfa; border: 1px solid #99f6e4; border-radius: 4px; padding: 3px 6px; margin-bottom: 6px; font-size: 10.5px; color: #115e59;">
+          <strong>Timeline Snapshot (+${offsetHours}h):</strong> ${snapshotTimeFormatted}
+          <div style="font-size: 9.5px; color: #0f766e;">(Scheduled Truck Arrival ETA: ${etaFormatted})</div>
+        </div>
+      ` : `
         <div style="display: flex; justify-content: space-between; margin-bottom: 3px; font-size: 11px;">
-          <span style="color: #64748b;">Estimated ETA:</span>
+          <span style="color: #64748b;">Scheduled Arrival ETA:</span>
           <strong style="font-family: monospace; color: #1e293b;">${etaFormatted}</strong>
         </div>
+      `}
 
+      <div style="margin-bottom: 6px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-          <span style="color: #64748b; font-size: 11px;">Overall Risk:</span>
+          <span style="color: #64748b; font-size: 11px;">Evaluated Risk:</span>
           <span style="background: ${badgeBg}; border: 1px solid; border-radius: 9999px; padding: 1.5px 8px; font-weight: bold; font-size: 10.5px; display: inline-flex; align-items: center; gap: 4px;">
-            ${isNoTravel ? '⛔' : isUnknown ? '?' : '●'} ${r.overall_risk || 'Low'} ${r.overall_score !== undefined ? `(Score: ${r.overall_score})` : ''}
+            ${isNoTravel ? '⛔' : isUnknown ? '?' : '●'} ${r.overall_risk || 'Low'} ${r.overall_score !== undefined && r.overall_score !== null ? `(Score: ${r.overall_score})` : ''}
           </span>
         </div>
 
@@ -192,13 +262,13 @@ function renderPopupHtml(checkpoint) {
 
       ${isNoTravel ? `
         <div style="background: #fff1f2; border: 1px solid #fecdd3; border-radius: 4px; padding: 4px 6px; font-size: 10.5px; color: #9f1239; font-weight: 600; margin-bottom: 6px;">
-          ⛔ NO TRAVEL HAZARD: Route violates dispatch safety boundaries.
+          ⛔ NO TRAVEL HAZARD: Violates safety rules at this forecast hour.
         </div>
       ` : ''}
 
       ${isUnknown ? `
         <div style="background: #faf5ff; border: 1px solid #e9d5ff; border-radius: 4px; padding: 4px 6px; font-size: 10.5px; color: #6b21a8; font-weight: 600; margin-bottom: 6px;">
-          ⚠️ UNKNOWN WEATHER: Forecast unavailable. Never treated as safe.
+          ⚠️ UNKNOWN WEATHER: Forecast data missing. Cannot verify safety.
         </div>
       ` : ''}
 
@@ -207,7 +277,6 @@ function renderPopupHtml(checkpoint) {
           <span style="color: #64748b; display: block;">Wind & Risk:</span>
           <strong style="font-family: monospace; color: #0f172a;">${w.wind_speed_mph !== null && w.wind_speed_mph !== undefined ? `${w.wind_speed_mph} mph` : '—'}</strong>
           <span style="display: block; color: #475569;">${wind.risk || '—'}</span>
-          ${wind.elevated_by_load ? '<span style="color: #b45309; display: block; font-size: 9px; font-weight: bold;">(Load elevated)</span>' : ''}
         </div>
 
         <div style="background: #f8fafc; padding: 4px; border-radius: 4px; border: 1px solid #f1f5f9;">
@@ -233,7 +302,6 @@ function renderPopupHtml(checkpoint) {
 
 /**
  * Validates GeoJSON coordinate pairs into Leaflet [lat, lon] tuples.
- * Filters out malformed, non-finite, or out-of-range coordinates.
  */
 function extractValidLatLngs(coordinates) {
   if (!Array.isArray(coordinates) || coordinates.length === 0) return [];
@@ -259,15 +327,20 @@ export default function RouteMap({
   routes = [],
   selectedRouteId,
   onSelectRoute,
+  timelineOffsetHours = 0,
+  samplingIntervalMiles = 25,
 }) {
   const mapContainerRef = useRef(null);
   const mapInstanceRef = useRef(null);
+  const heatmapLayerRef = useRef(null);
   const polylinesLayerRef = useRef(null);
   const markersLayerRef = useRef(null);
+
+  const [showHeatmap, setShowHeatmap] = useState(true);
   const [showMapLegend, setShowMapLegend] = useState(true);
 
   const selectedRoute = useMemo(() => {
-    return routes.find(r => r.id === selectedRouteId) || routes[0];
+    return routes.find((r) => r.id === selectedRouteId) || routes[0];
   }, [routes, selectedRouteId]);
 
   // Initialize Leaflet map instance once
@@ -284,9 +357,12 @@ export default function RouteMap({
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a> contributors',
+      attribution:
+        '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a> contributors',
     }).addTo(map);
 
+    // Layer addition order: heatmap at bottom, then polylines, then markers on top
+    heatmapLayerRef.current = L.layerGroup().addTo(map);
     polylinesLayerRef.current = L.layerGroup().addTo(map);
     markersLayerRef.current = L.layerGroup().addTo(map);
 
@@ -305,11 +381,12 @@ export default function RouteMap({
     };
   }, []);
 
-  // Synchronize polylines and markers whenever routes or selection change
+  // Synchronize heatmap, polylines, and markers whenever routes, selection, or timeline offset changes
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
 
+    if (heatmapLayerRef.current) heatmapLayerRef.current.clearLayers();
     if (polylinesLayerRef.current) polylinesLayerRef.current.clearLayers();
     if (markersLayerRef.current) markersLayerRef.current.clearLayers();
 
@@ -325,17 +402,12 @@ export default function RouteMap({
       const coords = extractValidLatLngs(rt.geometry?.coordinates);
       if (coords.length === 0) return;
 
-      coords.forEach(pt => allRoutesLatLngs.push(pt));
+      coords.forEach((pt) => allRoutesLatLngs.push(pt));
 
       if (isSelected) {
         selectedLatLngs = coords;
       }
 
-      // Route polyline styling:
-      // - Recommended & Selected: Teal #0d9488, weight 6, solid, high opacity
-      // - Recommended & Not Selected: Emerald #059669, weight 4.5, solid (easy to distinguish)
-      // - Selected & Not Recommended: Blue #0284c7, weight 5.5, solid
-      // - Alternative & Not Selected: Slate #94a3b8, weight 3.5, dashed '6, 8'
       let strokeColor = '#94a3b8';
       let strokeWeight = 3.5;
       let strokeOpacity = 0.55;
@@ -380,12 +452,10 @@ export default function RouteMap({
       `;
       poly.bindTooltip(tooltipText, { sticky: true });
 
-      // Interactive click to select route
       poly.on('click', () => {
         if (onSelectRoute) onSelectRoute(rt.id);
       });
 
-      // Hover emphasis
       poly.on('mouseover', () => {
         if (!isSelected) {
           poly.setStyle({ weight: strokeWeight + 2, opacity: 0.9 });
@@ -404,7 +474,82 @@ export default function RouteMap({
       }
     });
 
-    // 2. Draw checkpoints for selected route
+    // 2. Render Corridor Weather Heatmap Overlay (underneath route line and markers)
+    if (showHeatmap && selectedRoute?.checkpoints && selectedRoute.checkpoints.length > 0) {
+      // Dynamic halo radius matching corridor sampling interval (approx 80% of interval in meters)
+      const haloRadius = Math.max((samplingIntervalMiles || 25) * 1609.34 * 0.85, 22000);
+
+      selectedRoute.checkpoints.forEach((cp) => {
+        if (!cp.coordinates || cp.coordinates.length < 2) return;
+        const lon = Number(cp.coordinates[0]);
+        const lat = Number(cp.coordinates[1]);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+        const activeData = getActiveCheckpointData(cp, timelineOffsetHours);
+        const riskLevel = activeData.risk.overall_risk || (activeData.weather?.is_available === false ? 'Unknown' : 'Low');
+        const riskInfo = RISK_LEVELS[riskLevel] || RISK_LEVELS['Low'];
+        const isNoTravel = activeData.risk.is_no_travel || riskLevel === 'No Travel';
+        const isUnknown = riskLevel === 'Unknown' || activeData.weather?.is_available === false;
+
+        let fillColor = riskInfo.color || '#10b981';
+        let fillOpacity = 0.22;
+        let stroke = false;
+        let weight = 0;
+        let dashArray = undefined;
+
+        if (riskLevel === 'Moderate') {
+          fillOpacity = 0.32;
+        } else if (riskLevel === 'High') {
+          fillOpacity = 0.44;
+          stroke = true;
+          weight = 1;
+        } else if (riskLevel === 'Severe') {
+          fillOpacity = 0.58;
+          stroke = true;
+          weight = 1.5;
+          dashArray = '4, 4';
+        } else if (isNoTravel) {
+          fillColor = '#be123c';
+          fillOpacity = 0.70;
+          stroke = true;
+          weight = 2;
+        } else if (isUnknown) {
+          fillColor = '#7c3aed';
+          fillOpacity = 0.30;
+          stroke = true;
+          weight = 1.5;
+          dashArray = '3, 4';
+        }
+
+        const halo = L.circle([lat, lon], {
+          radius: haloRadius,
+          fillColor: fillColor,
+          fillOpacity: fillOpacity,
+          color: fillColor,
+          weight: weight,
+          stroke: stroke,
+          dashArray: dashArray,
+          interactive: false,
+        });
+
+        heatmapLayerRef.current.addLayer(halo);
+      });
+
+      // Corridor highway underglow track
+      if (selectedLatLngs.length > 0) {
+        const glow = L.polyline(selectedLatLngs, {
+          color: '#0d9488',
+          weight: 18,
+          opacity: 0.18,
+          lineCap: 'round',
+          lineJoin: 'round',
+          interactive: false,
+        });
+        heatmapLayerRef.current.addLayer(glow);
+      }
+    }
+
+    // 3. Draw checkpoints for selected route on top of heatmap and polylines
     if (selectedRoute?.checkpoints && selectedRoute.checkpoints.length > 0) {
       selectedRoute.checkpoints.forEach((cp) => {
         if (!cp.coordinates || cp.coordinates.length < 2) return;
@@ -413,17 +558,17 @@ export default function RouteMap({
         if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
 
         const marker = L.marker([lat, lon], {
-          icon: createCheckpointIcon(cp),
+          icon: createCheckpointIcon(cp, timelineOffsetHours),
           title: `Checkpoint ${cp.index}: ${cp.name} (${cp.cumulative_distance_miles} mi)`,
           riseOnHover: true,
         });
 
-        marker.bindPopup(renderPopupHtml(cp), { maxWidth: 320 });
+        marker.bindPopup(renderPopupHtml(cp, timelineOffsetHours), { maxWidth: 330 });
         markersLayerRef.current.addLayer(marker);
       });
     }
 
-    // 3. Fit bounds to selected route
+    // 4. Auto fit bounds
     if (selectedLatLngs.length > 0) {
       try {
         const bounds = L.latLngBounds(selectedLatLngs);
@@ -439,7 +584,7 @@ export default function RouteMap({
         console.warn('Could not fit bounds to all routes:', err);
       }
     }
-  }, [routes, selectedRouteId, selectedRoute, onSelectRoute]);
+  }, [routes, selectedRouteId, selectedRoute, onSelectRoute, timelineOffsetHours, showHeatmap, samplingIntervalMiles]);
 
   // Action: Zoom/Fit to selected route
   const handleFitSelectedRoute = () => {
@@ -456,9 +601,9 @@ export default function RouteMap({
     const map = mapInstanceRef.current;
     if (!map || !routes || routes.length === 0) return;
     const allCoords = [];
-    routes.forEach(rt => {
+    routes.forEach((rt) => {
       const pts = extractValidLatLngs(rt.geometry?.coordinates);
-      pts.forEach(p => allCoords.push(p));
+      pts.forEach((p) => allCoords.push(p));
     });
     if (allCoords.length > 0) {
       map.fitBounds(L.latLngBounds(allCoords), { padding: [40, 40], maxZoom: 14 });
@@ -466,13 +611,13 @@ export default function RouteMap({
   };
 
   return (
-    <div className="relative w-full h-[460px] sm:h-[500px] lg:h-[540px] rounded-xl overflow-hidden border border-slate-200 shadow-sm bg-slate-100 flex flex-col">
+    <div className="relative w-full h-[470px] sm:h-[510px] lg:h-[550px] rounded-xl overflow-hidden border border-slate-200 shadow-sm bg-slate-100 flex flex-col">
       <div ref={mapContainerRef} className="w-full h-full" />
 
-      {/* Floating Active Route Badge (Top-Left) */}
+      {/* Floating Active Route & Timeline Badge (Top-Left) */}
       <div className="absolute top-3 left-3 z-[1000] bg-white/95 backdrop-blur-xs px-3 py-1.5 rounded-lg border border-slate-200 shadow-xs flex items-center gap-2 text-xs">
         <Navigation className="w-3.5 h-3.5 text-teal-600" />
-        <span className="font-bold text-slate-900 truncate max-w-[200px] sm:max-w-[300px]">
+        <span className="font-bold text-slate-900 truncate max-w-[180px] sm:max-w-[260px]">
           {selectedRoute?.name || 'Corridor Route'}
         </span>
         {selectedRoute?.is_recommended && (
@@ -480,13 +625,33 @@ export default function RouteMap({
             ★ Recommended
           </span>
         )}
-        <span className="text-[11px] font-mono text-slate-500 hidden sm:inline">
-          ({selectedRoute?.checkpoints?.length || 0} checkpoints)
-        </span>
+        {timelineOffsetHours > 0 ? (
+          <span className="px-1.5 py-0.2 rounded bg-teal-50 text-teal-800 text-[10px] font-bold border border-teal-200 font-mono">
+            +{timelineOffsetHours}h Snapshot
+          </span>
+        ) : (
+          <span className="text-[10px] text-slate-500 font-mono hidden sm:inline">
+            (ETA-Aware View)
+          </span>
+        )}
       </div>
 
-      {/* Map Control Buttons: Fit Active / Fit All (Top-Right) */}
+      {/* Map Control Buttons: Fit Active / Fit All / Heatmap Toggle / Legend (Top-Right) */}
       <div className="absolute top-3 right-3 z-[1000] flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => setShowHeatmap(!showHeatmap)}
+          title={showHeatmap ? 'Hide Corridor Heatmap' : 'Show Corridor Heatmap'}
+          className={`px-2.5 py-1.5 rounded-lg border shadow-xs text-xs font-semibold flex items-center gap-1 transition ${
+            showHeatmap
+              ? 'bg-teal-700 text-white border-teal-700 shadow-sm'
+              : 'bg-white/95 hover:bg-white text-slate-700 border-slate-200'
+          }`}
+        >
+          <Flame className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">Heatmap</span>
+        </button>
+
         <button
           type="button"
           onClick={handleFitSelectedRoute}
@@ -494,7 +659,7 @@ export default function RouteMap({
           className="px-2.5 py-1.5 rounded-lg bg-white/95 hover:bg-white text-slate-700 hover:text-slate-900 border border-slate-200 shadow-xs text-xs font-semibold flex items-center gap-1 transition"
         >
           <ZoomIn className="w-3.5 h-3.5 text-teal-600" />
-          <span className="hidden sm:inline">Active Route</span>
+          <span className="hidden sm:inline">Active</span>
         </button>
 
         <button
@@ -504,7 +669,7 @@ export default function RouteMap({
           className="px-2.5 py-1.5 rounded-lg bg-white/95 hover:bg-white text-slate-700 hover:text-slate-900 border border-slate-200 shadow-xs text-xs font-semibold flex items-center gap-1 transition"
         >
           <Maximize2 className="w-3.5 h-3.5 text-slate-600" />
-          <span className="hidden sm:inline">All Routes</span>
+          <span className="hidden sm:inline">All</span>
         </button>
 
         <button
@@ -512,22 +677,26 @@ export default function RouteMap({
           onClick={() => setShowMapLegend(!showMapLegend)}
           title="Toggle on-map legend"
           className={`p-1.5 rounded-lg border shadow-xs transition ${
-            showMapLegend ? 'bg-teal-50 border-teal-300 text-teal-700' : 'bg-white/95 border-slate-200 text-slate-600'
+            showMapLegend
+              ? 'bg-teal-50 border-teal-300 text-teal-700'
+              : 'bg-white/95 border-slate-200 text-slate-600'
           }`}
         >
           <Layers className="w-4 h-4" />
         </button>
       </div>
 
-      {/* Floating On-Map Mini Legend (Bottom-Left) */}
+      {/* Floating On-Map Mini Legend & Heatmap Documentation (Bottom-Left) */}
       {showMapLegend && (
-        <div className="absolute bottom-3 left-3 z-[1000] bg-white/95 backdrop-blur-xs p-2.5 rounded-lg border border-slate-200 shadow-xs text-[11px] space-y-1.5 max-w-[280px]">
+        <div className="absolute bottom-3 left-3 z-[1000] bg-white/95 backdrop-blur-xs p-2.5 rounded-lg border border-slate-200 shadow-xs text-[11px] space-y-1.5 max-w-[300px]">
           <div className="flex items-center justify-between border-b border-slate-100 pb-1">
-            <span className="font-bold text-slate-800 text-[10.5px] uppercase tracking-wider">Map Legend</span>
+            <span className="font-bold text-slate-800 text-[10.5px] uppercase tracking-wider flex items-center gap-1">
+              <Layers className="w-3 h-3 text-teal-600" /> Map & Heatmap Legend
+            </span>
             <span className="text-[9.5px] text-slate-400 font-mono">Accessible</span>
           </div>
 
-          <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[10.5px] text-slate-600">
+          <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] text-slate-600">
             <div className="flex items-center gap-1.5">
               <span className="w-4 h-1 bg-teal-600 inline-block rounded" />
               <span>Active Route</span>
@@ -542,7 +711,7 @@ export default function RouteMap({
             </div>
             <div className="flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block border border-white" />
-              <span>Low Risk (0)</span>
+              <span>Low (0)</span>
             </div>
             <div className="flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 rounded-full bg-sky-500 inline-block border border-white" />
@@ -550,14 +719,19 @@ export default function RouteMap({
             </div>
             <div className="flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block border border-white" />
-              <span>High Risk (2)</span>
+              <span>High (2)</span>
             </div>
             <div className="flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 rounded-full bg-orange-500 inline-block border border-white" />
-              <span>Severe Risk (3)</span>
+              <span>Severe (3)</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <span className="w-3 h-3 bg-rose-600 text-white font-bold text-[8px] flex items-center justify-center rounded-xs" style={{ clipPath: 'polygon(30% 0%, 70% 0%, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0% 70%, 0% 30%)' }}>
+              <span
+                className="w-3 h-3 bg-rose-600 text-white font-bold text-[8px] flex items-center justify-center rounded-xs"
+                style={{
+                  clipPath: 'polygon(30% 0%, 70% 0%, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0% 70%, 0% 30%)',
+                }}
+              >
                 ✕
               </span>
               <strong className="text-rose-700">No Travel (4)</strong>
@@ -568,6 +742,10 @@ export default function RouteMap({
               </span>
               <span className="text-purple-800">Unknown (Forecast Missing)</span>
             </div>
+          </div>
+
+          <div className="border-t border-slate-100 pt-1 text-[9.5px] text-slate-500 italic">
+            Heatmap: Corridor risk buffer halos derived from checkpoint forecasts.
           </div>
         </div>
       )}

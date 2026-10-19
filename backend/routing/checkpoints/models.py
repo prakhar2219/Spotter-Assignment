@@ -17,6 +17,7 @@ class Checkpoint:
     is_origin: bool = False
     is_destination: bool = False
     weather: Optional[Dict[str, Any]] = None
+    hourly_forecasts: Optional[List[Dict[str, Any]]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
