@@ -22,6 +22,10 @@ from .weather import (
 from .risk import (
     evaluate_checkpoint_risk,
 )
+from .recommendation import (
+    rank_and_recommend_routes,
+    calculate_route_risk_metrics,
+)
 
 @api_view(['GET'])
 def health_check(request):
@@ -33,7 +37,7 @@ def health_check(request):
         "status": "healthy",
         "service": "spotter-weather-routing-backend",
         "timestamp": timezone.now().isoformat(),
-        "phase": 4,
+        "phase": 5,
     })
 
 @api_view(['POST'])
@@ -107,10 +111,12 @@ def route_preview(request):
             provider_name=provider_name,
         )
 
+        routes = result.get("routes", [])
+
         # If departure_time is provided, sample checkpoints and enrich with weather & risk
         if departure_time:
             result["load_weight_lb"] = load_weight_lb
-            for rt in result.get("routes", []):
+            for rt in routes:
                 coords = rt.get("geometry", {}).get("coordinates", [])
                 duration_s = rt.get("duration_seconds", 0.0)
                 try:
@@ -121,7 +127,7 @@ def route_preview(request):
                         interval_miles=interval_miles,
                     )
                     enrich_checkpoints_with_weather(checkpoints)
-                    
+
                     cp_dicts = []
                     has_no_travel = False
                     for cp in checkpoints:
@@ -138,6 +144,14 @@ def route_preview(request):
                 except Exception as cp_err:
                     rt["checkpoints_error"] = str(cp_err)
                     rt["checkpoints"] = []
+
+            # Perform strict lexicographical route ranking and recommendation
+            routes, recommendation = rank_and_recommend_routes(routes)
+            for rt in routes:
+                rt["is_recommended"] = (rt.get("id") == recommendation.recommended_route_id)
+
+            result["routes"] = routes
+            result["recommendation"] = recommendation.to_dict()
 
         return Response(result, status=status.HTTP_200_OK)
 
@@ -261,12 +275,21 @@ def route_checkpoints(request):
             cp_dict["risk"] = risk_eval.to_dict()
             checkpoint_results.append(cp_dict)
 
+        # Compute route metrics for these checkpoints
+        total_dist_miles = float(checkpoints[-1].cumulative_distance_miles) if checkpoints else 0.0
+        metrics = calculate_route_risk_metrics(
+            checkpoint_results,
+            total_distance_miles=total_dist_miles,
+            travel_time_seconds=float(duration_s),
+        )
+
         return Response({
             "status": "success",
             "sampling_interval_miles": interval_miles,
             "load_weight_lb": load_weight_lb,
             "checkpoints_count": len(checkpoint_results),
             "checkpoints": checkpoint_results,
+            "metrics": metrics.to_dict(),
             "units": {
                 "wind_speed": "mph",
                 "precipitation": "in/hr",

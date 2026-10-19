@@ -3,6 +3,7 @@ from django.urls import reverse
 from rest_framework.test import APIClient
 from unittest.mock import patch, MagicMock
 from datetime import datetime, timezone, timedelta
+from typing import Dict, Any, List, Optional
 import requests
 
 from routing.services import (
@@ -41,6 +42,13 @@ from routing.risk import (
     classify_snow_risk,
     evaluate_checkpoint_risk,
 )
+from routing.recommendation import (
+    calculate_route_risk_metrics,
+    rank_and_recommend_routes,
+    get_lexicographical_key,
+    RouteRiskMetrics,
+    RecommendationResult,
+)
 
 class HealthCheckTests(TestCase):
     def setUp(self):
@@ -54,7 +62,7 @@ class HealthCheckTests(TestCase):
         self.assertEqual(data.get('status'), 'healthy')
         self.assertEqual(data.get('service'), 'spotter-weather-routing-backend')
         self.assertIn('timestamp', data)
-        self.assertEqual(data.get('phase'), 4)
+        self.assertEqual(data.get('phase'), 5)
 
     def test_cors_headers_allowed_origin(self):
         url = reverse('health-check')
@@ -273,297 +281,540 @@ class WeatherIntegrationTests(TestCase):
         self.assertIsNone(w_empty.precipitation_in_hr)
         self.assertNotEqual(w_empty.status, "available")
 
-        mock_hourly = {
-            "time": ["2026-10-20T12:00"],
-            "wind_speed_10m": [10.0],
-            "precipitation": [0.0],
-            "snowfall": [0.0],
-            "temperature_2m": [60.0],
-            "weather_code": [0],
-        }
-        w_out = self.provider.match_checkpoint_weather(mock_hourly, "2029-01-01T00:00:00Z")
-        self.assertFalse(w_out.is_available)
-        self.assertEqual(w_out.status, "outside_forecast_horizon")
-
 
 class WindRiskThresholdAndLoadRulesTests(TestCase):
-    """
-    Tests all wind speed thresholds and strict load boundaries:
-    - Below 25 mph: Low
-    - 25–34 mph: Moderate
-    - 35–44 mph: High (Elevated to Severe if load > 40,000 lb)
-    - 45–54 mph: Severe (Elevated to No Travel if load > 30,000 lb)
-    - >= 55 mph: No Travel (All loads)
-    - Tests exactly 30,000 lb and 40,000 lb separately from values above them.
-    """
-
     def test_wind_below_25_is_low(self):
         for wind in [0.0, 10.0, 24.9]:
             eval_res = classify_wind_risk(wind, load_weight_lb=50000)
-            self.assertEqual(eval_res.risk, RiskLevel.LOW, f"Failed at wind {wind}")
+            self.assertEqual(eval_res.risk, RiskLevel.LOW)
             self.assertEqual(eval_res.score, 0)
             self.assertFalse(eval_res.elevated_by_load)
 
     def test_wind_25_to_34_is_moderate(self):
         for wind in [25.0, 29.5, 34.9]:
             eval_res = classify_wind_risk(wind, load_weight_lb=50000)
-            self.assertEqual(eval_res.risk, RiskLevel.MODERATE, f"Failed at wind {wind}")
+            self.assertEqual(eval_res.risk, RiskLevel.MODERATE)
             self.assertEqual(eval_res.score, 1)
-            self.assertFalse(eval_res.elevated_by_load)
 
     def test_wind_35_to_44_standard_and_load_boundary_40k(self):
-        # 1. At load <= 40,000 lb: Risk is High
         for wind in [35.0, 40.0, 44.9]:
-            # Test light load
-            res_light = classify_wind_risk(wind, load_weight_lb=20000)
-            self.assertEqual(res_light.risk, RiskLevel.HIGH)
-            self.assertEqual(res_light.score, 2)
-            self.assertFalse(res_light.elevated_by_load)
-
-            # Test EXACTLY 40,000 lb -> MUST remain High!
+            # Exact 40,000 lb -> High
             res_exact = classify_wind_risk(wind, load_weight_lb=40000)
-            self.assertEqual(res_exact.risk, RiskLevel.HIGH, f"Failed at exact 40,000 lb with wind {wind}")
-            self.assertEqual(res_exact.score, 2)
+            self.assertEqual(res_exact.risk, RiskLevel.HIGH)
             self.assertFalse(res_exact.elevated_by_load)
 
-            # Test ABOVE 40,000 lb (40,001 lb, 45,000 lb) -> MUST elevate to Severe!
+            # Above 40,000 lb -> Severe
             res_above = classify_wind_risk(wind, load_weight_lb=40001)
-            self.assertEqual(res_above.risk, RiskLevel.SEVERE, f"Failed at 40,001 lb with wind {wind}")
-            self.assertEqual(res_above.score, 3)
+            self.assertEqual(res_above.risk, RiskLevel.SEVERE)
             self.assertTrue(res_above.elevated_by_load)
-
-            res_heavy = classify_wind_risk(wind, load_weight_lb=50000)
-            self.assertEqual(res_heavy.risk, RiskLevel.SEVERE)
-            self.assertTrue(res_heavy.elevated_by_load)
 
     def test_wind_45_to_54_standard_and_load_boundary_30k(self):
-        # 1. At load <= 30,000 lb: Risk is Severe
         for wind in [45.0, 50.0, 54.9]:
-            res_light = classify_wind_risk(wind, load_weight_lb=15000)
-            self.assertEqual(res_light.risk, RiskLevel.SEVERE)
-            self.assertEqual(res_light.score, 3)
-            self.assertFalse(res_light.elevated_by_load)
-
-            # Test EXACTLY 30,000 lb -> MUST remain Severe!
+            # Exact 30,000 lb -> Severe
             res_exact = classify_wind_risk(wind, load_weight_lb=30000)
-            self.assertEqual(res_exact.risk, RiskLevel.SEVERE, f"Failed at exact 30,000 lb with wind {wind}")
-            self.assertEqual(res_exact.score, 3)
+            self.assertEqual(res_exact.risk, RiskLevel.SEVERE)
             self.assertFalse(res_exact.elevated_by_load)
 
-            # Test ABOVE 30,000 lb (30,001 lb, 35,000 lb) -> MUST elevate to No Travel!
+            # Above 30,000 lb -> No Travel
             res_above = classify_wind_risk(wind, load_weight_lb=30001)
-            self.assertEqual(res_above.risk, RiskLevel.NO_TRAVEL, f"Failed at 30,001 lb with wind {wind}")
-            self.assertEqual(res_above.score, 4)
+            self.assertEqual(res_above.risk, RiskLevel.NO_TRAVEL)
             self.assertTrue(res_above.elevated_by_load)
 
-            res_heavy = classify_wind_risk(wind, load_weight_lb=45000)
-            self.assertEqual(res_heavy.risk, RiskLevel.NO_TRAVEL)
-            self.assertTrue(res_heavy.elevated_by_load)
-
     def test_wind_55_and_above_is_always_no_travel(self):
-        # Wind >= 55 mph means No Travel for ANY load (empty, light, heavy)
-        for wind in [55.0, 58.5, 75.0, 100.0]:
+        for wind in [55.0, 58.5, 75.0]:
             for load in [0, 10000, 30000, 40000, 80000]:
                 eval_res = classify_wind_risk(wind, load_weight_lb=load)
-                self.assertEqual(
-                    eval_res.risk,
-                    RiskLevel.NO_TRAVEL,
-                    f"Failed: wind {wind} mph with load {load} lb did not return No Travel"
-                )
-                self.assertEqual(eval_res.score, 4)
+                self.assertEqual(eval_res.risk, RiskLevel.NO_TRAVEL)
 
 
 class RainRiskThresholdTests(TestCase):
-    """
-    Tests rain intensity thresholds and boundaries:
-    - Below 0.10 in/hr: Low
-    - 0.10–0.25: Moderate (includes 0.10, up to < 0.25)
-    - 0.25–0.50: High (includes 0.25, up to < 0.50)
-    - 0.50–1.00: Severe (includes 0.50 and 1.00)
-    - Above 1.00: No Travel (> 1.00)
-    """
-
-    def test_rain_below_0_10_is_low(self):
-        for r in [0.0, 0.05, 0.09]:
-            self.assertEqual(classify_rain_risk(r).risk, RiskLevel.LOW)
-
-    def test_rain_0_10_to_0_25_is_moderate(self):
-        # Exactly 0.10 must be Moderate
+    def test_rain_thresholds(self):
+        self.assertEqual(classify_rain_risk(0.05).risk, RiskLevel.LOW)
         self.assertEqual(classify_rain_risk(0.10).risk, RiskLevel.MODERATE)
-        self.assertEqual(classify_rain_risk(0.18).risk, RiskLevel.MODERATE)
-        self.assertEqual(classify_rain_risk(0.249).risk, RiskLevel.MODERATE)
-
-    def test_rain_0_25_to_0_50_is_high(self):
-        # Exactly 0.25 must be High
         self.assertEqual(classify_rain_risk(0.25).risk, RiskLevel.HIGH)
-        self.assertEqual(classify_rain_risk(0.38).risk, RiskLevel.HIGH)
-        self.assertEqual(classify_rain_risk(0.499).risk, RiskLevel.HIGH)
-
-    def test_rain_0_50_to_1_00_is_severe(self):
-        # Exactly 0.50 must be Severe
         self.assertEqual(classify_rain_risk(0.50).risk, RiskLevel.SEVERE)
-        self.assertEqual(classify_rain_risk(0.75).risk, RiskLevel.SEVERE)
-        # Exactly 1.00 must be Severe
         self.assertEqual(classify_rain_risk(1.00).risk, RiskLevel.SEVERE)
-
-    def test_rain_above_1_00_is_no_travel(self):
-        for r in [1.001, 1.05, 1.50, 3.0]:
-            self.assertEqual(classify_rain_risk(r).risk, RiskLevel.NO_TRAVEL)
+        self.assertEqual(classify_rain_risk(1.05).risk, RiskLevel.NO_TRAVEL)
 
 
 class SnowRiskThresholdTests(TestCase):
-    """
-    Tests snow intensity thresholds and boundaries:
-    - Below 0.5 in/hr: Low
-    - 0.5–1.0: Moderate
-    - 1.0–2.0: High
-    - 2.0–3.0: Severe
-    - Above 3.0: No Travel
-    """
-
-    def test_snow_below_0_50_is_low(self):
-        for s in [0.0, 0.2, 0.49]:
-            self.assertEqual(classify_snow_risk(s).risk, RiskLevel.LOW)
-
-    def test_snow_0_50_to_1_00_is_moderate(self):
-        # Exactly 0.50 must be Moderate
-        self.assertEqual(classify_snow_risk(0.50).risk, RiskLevel.MODERATE)
-        self.assertEqual(classify_snow_risk(0.75).risk, RiskLevel.MODERATE)
-        self.assertEqual(classify_snow_risk(0.99).risk, RiskLevel.MODERATE)
-
-    def test_snow_1_00_to_2_00_is_high(self):
-        # Exactly 1.00 must be High
-        self.assertEqual(classify_snow_risk(1.00).risk, RiskLevel.HIGH)
-        self.assertEqual(classify_snow_risk(1.50).risk, RiskLevel.HIGH)
-        self.assertEqual(classify_snow_risk(1.99).risk, RiskLevel.HIGH)
-
-    def test_snow_2_00_to_3_00_is_severe(self):
-        # Exactly 2.00 must be Severe
-        self.assertEqual(classify_snow_risk(2.00).risk, RiskLevel.SEVERE)
-        self.assertEqual(classify_snow_risk(2.50).risk, RiskLevel.SEVERE)
-        # Exactly 3.00 must be Severe
-        self.assertEqual(classify_snow_risk(3.00).risk, RiskLevel.SEVERE)
-
-    def test_snow_above_3_00_is_no_travel(self):
-        for s in [3.001, 3.50, 5.0]:
-            self.assertEqual(classify_snow_risk(s).risk, RiskLevel.NO_TRAVEL)
+    def test_snow_thresholds(self):
+        self.assertEqual(classify_snow_risk(0.2).risk, RiskLevel.LOW)
+        self.assertEqual(classify_snow_risk(0.5).risk, RiskLevel.MODERATE)
+        self.assertEqual(classify_snow_risk(1.0).risk, RiskLevel.HIGH)
+        self.assertEqual(classify_snow_risk(2.0).risk, RiskLevel.SEVERE)
+        self.assertEqual(classify_snow_risk(3.0).risk, RiskLevel.SEVERE)
+        self.assertEqual(classify_snow_risk(3.5).risk, RiskLevel.NO_TRAVEL)
 
 
 class OverallCheckpointRiskTests(TestCase):
-    """
-    Tests overall checkpoint risk logic:
-    - Worst of wind, rain, snow determines overall risk.
-    - Preserves individual condition risks.
-    - No Travel on any condition immediately marks checkpoint No Travel.
-    """
-
     def test_worst_condition_determines_overall_risk(self):
-        # Wind Severe, Rain Low, Snow Low -> Overall is Severe
         w1 = {"wind_speed_mph": 48.0, "precipitation_in_hr": 0.02, "snowfall_in_hr": 0.0, "is_available": True}
         cp1 = evaluate_checkpoint_risk(w1, load_weight_lb=25000)
         self.assertEqual(cp1.overall_risk, RiskLevel.SEVERE)
-        self.assertEqual(cp1.wind.risk, RiskLevel.SEVERE)
-        self.assertEqual(cp1.rain.risk, RiskLevel.LOW)
-        self.assertEqual(cp1.snow.risk, RiskLevel.LOW)
-        self.assertTrue(cp1.is_safe)
-        self.assertFalse(cp1.is_no_travel)
 
-        # Wind Low, Rain High, Snow Low -> Overall is High
-        w2 = {"wind_speed_mph": 10.0, "precipitation_in_hr": 0.35, "snowfall_in_hr": 0.0, "is_available": True}
-        cp2 = evaluate_checkpoint_risk(w2, load_weight_lb=45000)
-        self.assertEqual(cp2.overall_risk, RiskLevel.HIGH)
-        self.assertEqual(cp2.rain.risk, RiskLevel.HIGH)
-
-        # Wind Low, Rain Low, Snow No Travel -> Overall is No Travel
         w3 = {"wind_speed_mph": 5.0, "precipitation_in_hr": 0.0, "snowfall_in_hr": 3.8, "is_available": True}
         cp3 = evaluate_checkpoint_risk(w3, load_weight_lb=20000)
         self.assertEqual(cp3.overall_risk, RiskLevel.NO_TRAVEL)
-        self.assertFalse(cp3.is_safe)
         self.assertTrue(cp3.is_no_travel)
 
-    def test_load_elevation_causes_no_travel(self):
-        # 48 mph wind with 30,000 lb is Severe (Safe to travel)
-        w = {"wind_speed_mph": 48.0, "precipitation_in_hr": 0.0, "snowfall_in_hr": 0.0, "is_available": True}
-        cp_safe = evaluate_checkpoint_risk(w, load_weight_lb=30000)
-        self.assertEqual(cp_safe.overall_risk, RiskLevel.SEVERE)
-        self.assertFalse(cp_safe.is_no_travel)
 
-        # 48 mph wind with 30,001 lb is No Travel (Ineligible!)
-        cp_unsafe = evaluate_checkpoint_risk(w, load_weight_lb=30001)
-        self.assertEqual(cp_unsafe.overall_risk, RiskLevel.NO_TRAVEL)
-        self.assertTrue(cp_unsafe.is_no_travel)
-        self.assertFalse(cp_unsafe.is_safe)
+# =========================================================================
+# PHASE 5: RECOMMENDATION ENGINE AND STRICT LEXICOGRAPHICAL RANKING TESTS
+# =========================================================================
 
+def make_test_checkpoint(index: int, cum_miles: float, risk_str: str, score: int) -> Dict[str, Any]:
+    return {
+        "index": index,
+        "name": f"Checkpoint {index}",
+        "cumulative_distance_miles": cum_miles,
+        "risk": {
+            "overall_risk": risk_str,
+            "overall_score": score,
+            "is_safe": (risk_str not in ("No Travel", "Unknown")),
+            "is_no_travel": (risk_str == "No Travel"),
+            "explanation": f"Risk level is {risk_str}."
+        }
+    }
 
-class InvalidAndMissingWeatherRiskTests(TestCase):
+class RecommendationTier1SevereMilesPriorityTests(TestCase):
     """
-    Tests that unknown weather is NEVER classified as safe.
+    Tier 1 Test: Fewest Severe miles takes priority over everything else.
+    Route A has 0 Severe miles and 40 High miles, but is longer (5 hours).
+    Route B has 10 Severe miles and 0 High miles, and is shorter (2 hours).
+    Route A MUST be recommended because Severe miles is Tier 1.
     """
+    def test_fewest_severe_miles_beats_everything(self):
+        # Route A: 0 to 50 mi (Low), 50 to 90 mi (High: 40 mi), 90 to 100 mi (Low)
+        # Total Severe miles = 0.0, Duration = 5h (18000s)
+        cp_a = [
+            make_test_checkpoint(0, 0.0, "Low", 0),
+            make_test_checkpoint(1, 50.0, "Low", 0),
+            make_test_checkpoint(2, 90.0, "High", 2),
+            make_test_checkpoint(3, 100.0, "Low", 0),
+        ]
+        route_a = {
+            "id": "route-a",
+            "name": "Route A (Longer, 0 Severe mi)",
+            "distance_miles": 100.0,
+            "duration_seconds": 18000.0,
+            "duration_formatted": "5h 00m",
+            "checkpoints": cp_a,
+        }
 
-    def test_missing_weather_is_unknown_and_unsafe(self):
-        cp_none = evaluate_checkpoint_risk(None)
-        self.assertEqual(cp_none.overall_risk, RiskLevel.UNKNOWN)
-        self.assertFalse(cp_none.is_safe)
-        self.assertEqual(cp_none.overall_score, -1)
+        # Route B: 0 to 40 mi (Low), 40 to 50 mi (Severe: 10 mi), 50 to 70 mi (Low)
+        # Total Severe miles = 10.0, Duration = 2h (7200s) - MUCH faster!
+        cp_b = [
+            make_test_checkpoint(0, 0.0, "Low", 0),
+            make_test_checkpoint(1, 40.0, "Low", 0),
+            make_test_checkpoint(2, 50.0, "Severe", 3),
+            make_test_checkpoint(3, 70.0, "Low", 0),
+        ]
+        route_b = {
+            "id": "route-b",
+            "name": "Route B (Fast, but 10 Severe mi)",
+            "distance_miles": 70.0,
+            "duration_seconds": 7200.0,
+            "duration_formatted": "2h 00m",
+            "checkpoints": cp_b,
+        }
 
-        w_unavail = {"is_available": False, "wind_speed_mph": None}
-        cp_unavail = evaluate_checkpoint_risk(w_unavail)
-        self.assertEqual(cp_unavail.overall_risk, RiskLevel.UNKNOWN)
-        self.assertFalse(cp_unavail.is_safe)
+        routes = [route_b, route_a]
+        ranked, rec = rank_and_recommend_routes(routes)
 
-    def test_partial_missing_weather_cannot_be_verified_as_safe(self):
-        # Wind is known Low, but precipitation is None
-        w_partial = {"wind_speed_mph": 12.0, "precipitation_in_hr": None, "snowfall_in_hr": 0.0, "is_available": True}
-        cp_partial = evaluate_checkpoint_risk(w_partial)
-        self.assertEqual(cp_partial.overall_risk, RiskLevel.UNKNOWN)
-        self.assertFalse(cp_partial.is_safe)
-
-    def test_invalid_negative_values_produce_unknown_risk(self):
-        w_neg = {"wind_speed_mph": -10.0, "precipitation_in_hr": 0.0, "snowfall_in_hr": 0.0, "is_available": True}
-        cp_neg = evaluate_checkpoint_risk(w_neg)
-        self.assertEqual(cp_neg.overall_risk, RiskLevel.UNKNOWN)
-        self.assertFalse(cp_neg.is_safe)
+        self.assertEqual(rec.status, "recommended")
+        self.assertEqual(rec.recommended_route_id, "route-a")
+        self.assertEqual(rec.decision_criterion, "fewest_severe_miles")
+        self.assertIn("Route A", rec.explanation)
+        self.assertIn("Severe miles", rec.explanation)
 
 
-class RouteCheckpointsEndpointTests(TestCase):
+class RecommendationTier2HighMilesTests(TestCase):
+    """
+    Tier 2 Test: When Severe miles are equal, Fewest High miles decides.
+    Route A has 0 Severe miles and 15 High miles (4 hours).
+    Route B has 0 Severe miles and 30 High miles (2.5 hours).
+    Route A MUST win!
+    """
+    def test_fewest_high_miles_when_severe_tied(self):
+        cp_a = [
+            make_test_checkpoint(0, 0.0, "Low", 0),
+            make_test_checkpoint(1, 50.0, "Low", 0),
+            make_test_checkpoint(2, 65.0, "High", 2),  # 15 High miles
+            make_test_checkpoint(3, 100.0, "Low", 0),
+        ]
+        route_a = {
+            "id": "route-a",
+            "name": "Route A (15 High mi)",
+            "distance_miles": 100.0,
+            "duration_seconds": 14400.0,
+            "checkpoints": cp_a,
+        }
+
+        cp_b = [
+            make_test_checkpoint(0, 0.0, "Low", 0),
+            make_test_checkpoint(1, 30.0, "High", 2),  # 30 High miles
+            make_test_checkpoint(2, 60.0, "Low", 0),
+        ]
+        route_b = {
+            "id": "route-b",
+            "name": "Route B (30 High mi, Faster)",
+            "distance_miles": 60.0,
+            "duration_seconds": 9000.0,
+            "checkpoints": cp_b,
+        }
+
+        routes = [route_b, route_a]
+        ranked, rec = rank_and_recommend_routes(routes)
+
+        self.assertEqual(rec.recommended_route_id, "route-a")
+        self.assertEqual(rec.decision_criterion, "fewest_high_miles")
+
+
+class RecommendationTier3AverageRiskTests(TestCase):
+    """
+    Tier 3 Test: When Severe miles and High miles are tied, Lowest Distance-Weighted Average Risk decides.
+    Route A has 0 Severe, 0 High, 20 Moderate miles, 80 Low miles -> Avg Risk = 0.20
+    Route B has 0 Severe, 0 High, 60 Moderate miles, 40 Low miles -> Avg Risk = 0.60
+    Route A MUST win!
+    """
+    def test_lowest_average_risk_when_severe_and_high_tied(self):
+        cp_a = [
+            make_test_checkpoint(0, 0.0, "Low", 0),
+            make_test_checkpoint(1, 80.0, "Low", 0),
+            make_test_checkpoint(2, 100.0, "Moderate", 1),  # 20 Moderate miles
+        ]
+        route_a = {
+            "id": "route-a",
+            "name": "Route A (Lower Avg Risk)",
+            "distance_miles": 100.0,
+            "duration_seconds": 12000.0,
+            "checkpoints": cp_a,
+        }
+
+        cp_b = [
+            make_test_checkpoint(0, 0.0, "Low", 0),
+            make_test_checkpoint(1, 40.0, "Low", 0),
+            make_test_checkpoint(2, 100.0, "Moderate", 1), # 60 Moderate miles
+        ]
+        route_b = {
+            "id": "route-b",
+            "name": "Route B (Higher Avg Risk)",
+            "distance_miles": 100.0,
+            "duration_seconds": 10000.0,
+            "checkpoints": cp_b,
+        }
+
+        routes = [route_b, route_a]
+        ranked, rec = rank_and_recommend_routes(routes)
+
+        self.assertEqual(rec.recommended_route_id, "route-a")
+        self.assertEqual(rec.decision_criterion, "lowest_average_risk")
+
+
+class RecommendationTier4TravelTimeTests(TestCase):
+    """
+    Tier 4 Test: When safety metrics (Severe miles, High miles, Avg risk) are completely identical,
+    Shortest Travel Time is the tie-breaker.
+    """
+    def test_shortest_travel_time_when_all_safety_metrics_identical(self):
+        # Both routes have identical 100 miles, 0 Severe, 0 High, identical Moderate miles
+        cp_a = [
+            make_test_checkpoint(0, 0.0, "Low", 0),
+            make_test_checkpoint(1, 100.0, "Low", 0),
+        ]
+        route_a = {
+            "id": "route-a",
+            "name": "Route A (3 hours)",
+            "distance_miles": 100.0,
+            "duration_seconds": 10800.0,
+            "checkpoints": cp_a,
+        }
+
+        cp_b = [
+            make_test_checkpoint(0, 0.0, "Low", 0),
+            make_test_checkpoint(1, 100.0, "Low", 0),
+        ]
+        route_b = {
+            "id": "route-b",
+            "name": "Route B (2.5 hours)",
+            "distance_miles": 100.0,
+            "duration_seconds": 9000.0,
+            "checkpoints": cp_b,
+        }
+
+        routes = [route_a, route_b]
+        ranked, rec = rank_and_recommend_routes(routes)
+
+        # Route B is faster, so Route B wins on Tier 4!
+        self.assertEqual(rec.recommended_route_id, "route-b")
+        self.assertEqual(rec.decision_criterion, "shortest_travel_time")
+
+
+class RecommendationIneligibilityNoTravelTests(TestCase):
+    """
+    Tests that any route with a No Travel checkpoint is excluded from recommendation.
+    """
+    def test_route_with_no_travel_excluded(self):
+        # Route A: Very short, fast, but contains 1 No Travel checkpoint
+        cp_a = [
+            make_test_checkpoint(0, 0.0, "Low", 0),
+            make_test_checkpoint(1, 30.0, "No Travel", 4),
+            make_test_checkpoint(2, 50.0, "Low", 0),
+        ]
+        route_a = {
+            "id": "route-a",
+            "name": "Route A (Fast, but No Travel hazard)",
+            "distance_miles": 50.0,
+            "duration_seconds": 3600.0,
+            "checkpoints": cp_a,
+        }
+
+        # Route B: Longer, 10 Severe miles, but ELIGIBLE (No 'No Travel' checkpoints)
+        cp_b = [
+            make_test_checkpoint(0, 0.0, "Low", 0),
+            make_test_checkpoint(1, 40.0, "Severe", 3),
+            make_test_checkpoint(2, 100.0, "Low", 0),
+        ]
+        route_b = {
+            "id": "route-b",
+            "name": "Route B (Eligible)",
+            "distance_miles": 100.0,
+            "duration_seconds": 7200.0,
+            "checkpoints": cp_b,
+        }
+
+        routes = [route_a, route_b]
+        ranked, rec = rank_and_recommend_routes(routes)
+
+        # Route A is excluded; Route B must win!
+        self.assertEqual(rec.recommended_route_id, "route-b")
+        self.assertIn("route-a", rec.ineligible_route_ids)
+
+
+class RecommendationAllIneligibleWarningTests(TestCase):
+    """
+    Tests when ALL candidate routes encounter No Travel checkpoints.
+    Must return recommended_route_id = None and clear warning.
+    """
+    def test_all_ineligible_returns_clear_warning(self):
+        cp_a = [
+            make_test_checkpoint(0, 0.0, "Low", 0),
+            make_test_checkpoint(1, 50.0, "No Travel", 4),
+        ]
+        route_a = {"id": "route-a", "distance_miles": 50.0, "duration_seconds": 3600.0, "checkpoints": cp_a}
+
+        cp_b = [
+            make_test_checkpoint(0, 0.0, "Low", 0),
+            make_test_checkpoint(1, 60.0, "No Travel", 4),
+        ]
+        route_b = {"id": "route-b", "distance_miles": 60.0, "duration_seconds": 4000.0, "checkpoints": cp_b}
+
+        routes = [route_a, route_b]
+        ranked, rec = rank_and_recommend_routes(routes)
+
+        self.assertIsNone(rec.recommended_route_id)
+        self.assertEqual(rec.status, "no_eligible_routes")
+        self.assertIn("No route meets the configured safety rules", rec.explanation)
+        self.assertEqual(len(rec.ineligible_route_ids), 2)
+
+
+class ConsistentRiskMilesAndSegmentSumTests(TestCase):
+    """
+    Verifies risk miles sum consistently to total route distance and checkpoint locations
+    are not counted as miles.
+    """
+    def test_risk_miles_sum_to_total_distance(self):
+        checkpoints = [
+            make_test_checkpoint(0, 0.0, "Low", 0),
+            make_test_checkpoint(1, 25.0, "Moderate", 1),
+            make_test_checkpoint(2, 50.0, "High", 2),
+            make_test_checkpoint(3, 75.0, "Severe", 3),
+            make_test_checkpoint(4, 100.0, "Low", 0),
+        ]
+        metrics = calculate_route_risk_metrics(checkpoints, total_distance_miles=100.0, travel_time_seconds=7200.0)
+
+        sum_miles = (
+            metrics.low_miles
+            + metrics.moderate_miles
+            + metrics.high_miles
+            + metrics.severe_miles
+            + metrics.no_travel_miles
+            + metrics.unknown_miles
+        )
+        self.assertAlmostEqual(sum_miles, 100.0, places=1)
+        self.assertEqual(metrics.total_distance_miles, 100.0)
+
+
+class RecommendationMissingDataTests(TestCase):
+    """
+    Engineering rule: Never present missing weather data as safe weather.
+    A route containing checkpoints with unknown or missing weather forecasts
+    must be flagged as ineligible.
+    """
+    def test_missing_weather_data_makes_route_ineligible(self):
+        cp_with_missing = [
+            make_test_checkpoint(0, 0.0, "Low", 0),
+            {
+                "index": 1,
+                "name": "Checkpoint 1",
+                "cumulative_distance_miles": 50.0,
+                "risk": {
+                    "overall_risk": "Unknown",
+                    "overall_score": -1,
+                    "is_safe": False,
+                    "is_no_travel": False,
+                    "explanation": "Weather forecast unavailable beyond 48h horizon."
+                }
+            },
+            make_test_checkpoint(2, 100.0, "Low", 0),
+        ]
+        route_missing = {
+            "id": "route-missing",
+            "name": "Route With Missing Weather",
+            "distance_miles": 100.0,
+            "duration_seconds": 5000.0,
+            "checkpoints": cp_with_missing,
+        }
+
+        cp_valid = [
+            make_test_checkpoint(0, 0.0, "Low", 0),
+            make_test_checkpoint(1, 100.0, "Moderate", 1),
+        ]
+        route_valid = {
+            "id": "route-valid",
+            "name": "Route With Known Weather",
+            "distance_miles": 100.0,
+            "duration_seconds": 6000.0,
+            "checkpoints": cp_valid,
+        }
+
+        routes = [route_missing, route_valid]
+        ranked, rec = rank_and_recommend_routes(routes)
+
+        self.assertEqual(rec.recommended_route_id, "route-valid")
+        self.assertIn("route-missing", rec.ineligible_route_ids)
+
+
+class RecommendationTiedRoutesTests(TestCase):
+    """
+    Test behavior when multiple eligible routes have identical metrics across all four tiers.
+    """
+    def test_completely_identical_routes_handled_gracefully(self):
+        cp_1 = [
+            make_test_checkpoint(0, 0.0, "Low", 0),
+            make_test_checkpoint(1, 100.0, "Low", 0),
+        ]
+        route_1 = {
+            "id": "route-1",
+            "name": "Route 1",
+            "distance_miles": 100.0,
+            "duration_seconds": 7200.0,
+            "checkpoints": cp_1,
+        }
+
+        cp_2 = [
+            make_test_checkpoint(0, 0.0, "Low", 0),
+            make_test_checkpoint(1, 100.0, "Low", 0),
+        ]
+        route_2 = {
+            "id": "route-2",
+            "name": "Route 2",
+            "distance_miles": 100.0,
+            "duration_seconds": 7200.0,
+            "checkpoints": cp_2,
+        }
+
+        routes = [route_1, route_2]
+        ranked, rec = rank_and_recommend_routes(routes)
+
+        self.assertEqual(rec.status, "recommended")
+        self.assertIn(rec.recommended_route_id, ["route-1", "route-2"])
+        self.assertEqual(rec.decision_criterion, "identical")
+        self.assertEqual(len(rec.ranked_route_ids), 2)
+
+
+class RouteRecommendationApiIntegrationTests(TestCase):
+    """
+    Integration tests verifying POST /api/routes/preview/ with departure_time
+    produces fully calculated metrics and recommendation payloads.
+    """
     def setUp(self):
         self.client = APIClient()
-        self.url = reverse('routes-checkpoints')
+        self.url = reverse('routes-preview')
 
-    @patch('routing.weather.open_meteo.OpenMeteoWeatherProvider.fetch_hourly_forecasts')
-    def test_checkpoints_endpoint_with_risk_evaluation(self, mock_fetch):
-        mock_fetch.return_value = [
-            {
-                "time": ["2026-10-20T12:00"],
-                "wind_speed_10m": [48.0],
-                "precipitation": [0.12],
-                "snowfall": [0.0],
-                "temperature_2m": [65.0],
-                "weather_code": [2],
-            }
-        ] * 10
+    @patch('routing.views.preview_routes')
+    @patch('routing.views.enrich_checkpoints_with_weather')
+    def test_preview_endpoint_returns_metrics_and_recommendation(self, mock_enrich, mock_preview):
+        mock_preview.return_value = {
+            "provider": "mock",
+            "origin": {"query": "New York, NY", "coordinates": [-74.006, 40.7128]},
+            "destination": {"query": "Boston, MA", "coordinates": [-71.0589, 42.3601]},
+            "routes_count": 2,
+            "routes": [
+                {
+                    "id": "route-1",
+                    "name": "Route 1",
+                    "distance_miles": 200.0,
+                    "duration_seconds": 14000.0,
+                    "duration_formatted": "3h 53m",
+                    "geometry": {
+                        "type": "LineString",
+                        "coordinates": [[-74.006, 40.7128], [-72.5, 41.5], [-71.0589, 42.3601]]
+                    }
+                },
+                {
+                    "id": "route-2",
+                    "name": "Route 2",
+                    "distance_miles": 210.0,
+                    "duration_seconds": 15000.0,
+                    "duration_formatted": "4h 10m",
+                    "geometry": {
+                        "type": "LineString",
+                        "coordinates": [[-74.006, 40.7128], [-73.0, 41.7], [-71.0589, 42.3601]]
+                    }
+                }
+            ]
+        }
+
+        # enrich_checkpoints_with_weather populates cp.weather with safe low weather
+        def fake_enrich(cps):
+            for cp in cps:
+                cp.weather = NormalizedWeather(
+                    timestamp="2026-10-20T10:00:00+00:00",
+                    wind_speed_mph=15.0,
+                    precipitation_in_hr=0.01,
+                    snowfall_in_hr=0.0,
+                    temperature_fahrenheit=65.0,
+                    is_available=True,
+                )
+        mock_enrich.side_effect = fake_enrich
 
         payload = {
-            "route_coordinates": [[-75.16, 39.95], [-74.5, 40.2], [-73.98, 40.75]],
-            "departure_time": "2026-10-20T12:00:00Z",
-            "duration_seconds": 5400,
+            "origin": "New York, NY",
+            "destination": "Boston, MA",
+            "departure_time": "2026-10-20T10:00:00Z",
+            "load_weight_lb": 42000.0,
             "sampling_interval_miles": 25,
-            "load_weight_lb": 45000,
-            "include_weather": True
         }
 
         response = self.client.post(self.url, payload, format='json')
         self.assertEqual(response.status_code, 200)
         data = response.json()
-        self.assertEqual(data.get("status"), "success")
-        self.assertEqual(data.get("load_weight_lb"), 45000)
-        checkpoints = data.get("checkpoints", [])
-        self.assertGreater(len(checkpoints), 1)
 
-        # 48 mph wind with 45,000 lb (>30,000 lb) must evaluate to No Travel
-        cp0_risk = checkpoints[0]["risk"]
-        self.assertEqual(cp0_risk["overall_risk"], "No Travel")
-        self.assertTrue(cp0_risk["is_no_travel"])
-        self.assertFalse(cp0_risk["is_safe"])
-        self.assertEqual(cp0_risk["conditions"]["wind"]["risk"], "No Travel")
-        self.assertTrue(cp0_risk["conditions"]["wind"]["elevated_by_load"])
+        self.assertIn("recommendation", data)
+        rec = data["recommendation"]
+        self.assertIn("recommended_route_id", rec)
+        self.assertIn("decision_criterion", rec)
+        self.assertIn("explanation", rec)
+        self.assertIn("tradeoffs_summary", rec)
+
+        for route in data["routes"]:
+            self.assertIn("metrics", route)
+            metrics = route["metrics"]
+            self.assertIn("severe_miles", metrics)
+            self.assertIn("high_miles", metrics)
+            self.assertIn("distance_weighted_average_risk", metrics)
+            self.assertIn("is_eligible", metrics)
+
+

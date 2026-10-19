@@ -25,7 +25,12 @@ import {
   Truck,
   ShieldAlert,
   HelpCircle,
-  Weight
+  Weight,
+  Trophy,
+  Award,
+  Sparkles,
+  Check,
+  Ban
 } from 'lucide-react';
 
 const RISK_BADGES = {
@@ -59,6 +64,15 @@ const RISK_BADGES = {
     dot: 'bg-slate-400',
     label: 'Unknown',
   },
+};
+
+const DECISION_CRITERION_LABELS = {
+  'fewest_severe_miles': 'Tier 1: Fewest Severe Miles (Primary Hazard Avoidance)',
+  'fewest_high_miles': 'Tier 2: Fewest High Miles (Secondary Hazard Avoidance)',
+  'lowest_average_risk': 'Tier 3: Lowest Distance-Weighted Average Risk',
+  'shortest_travel_time': 'Tier 4: Shortest Travel Time (Tie-Breaker)',
+  'sole_eligible_route': 'Sole Eligible Alternative (All others No Travel)',
+  'identical': 'Tied: Identical Safety & Duration Metrics',
 };
 
 export default function App() {
@@ -125,7 +139,11 @@ export default function App() {
     setPreviewLoading(false);
     if (res.success) {
       setPreviewResult(res.data);
-      if (res.data.routes && res.data.routes.length > 0) {
+      // Auto-select the recommended winning route if available, otherwise first route
+      const recId = res.data?.recommendation?.recommended_route_id;
+      if (recId) {
+        setSelectedRouteId(recId);
+      } else if (res.data.routes && res.data.routes.length > 0) {
         setSelectedRouteId(res.data.routes[0].id);
       }
     } else {
@@ -134,6 +152,7 @@ export default function App() {
   };
 
   const selectedRoute = previewResult?.routes?.find(r => r.id === selectedRouteId) || previewResult?.routes?.[0];
+  const recommendation = previewResult?.recommendation;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
@@ -167,7 +186,7 @@ export default function App() {
                 {healthStatus.loading
                   ? 'Checking...'
                   : healthStatus.connected
-                  ? 'API Connected (Phase 4)'
+                  ? 'API Connected (Phase 5 Active)'
                   : 'API Offline'}
               </span>
               {healthStatus.latencyMs !== null && healthStatus.connected && (
@@ -194,20 +213,22 @@ export default function App() {
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
         {/* Hero Section */}
         <div className="bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 shadow-sm relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-bl from-teal-500/10 via-cyan-500/5 to-transparent rounded-full -mr-20 -mt-20 pointer-events-none" />
+          <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-bl from-teal-500/10 via-emerald-500/5 to-transparent rounded-full -mr-20 -mt-20 pointer-events-none" />
           
           <div className="max-w-3xl space-y-3 relative z-10">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-teal-50 border border-teal-200 text-teal-800 text-xs font-semibold">
-              <span className="w-1.5 h-1.5 rounded-full bg-teal-600" />
-              Phase 4 Milestone — Weather & Load Risk Engine Active
+              <Sparkles className="w-3.5 h-3.5 text-teal-600" />
+              Phase 5 Milestone — Strict Lexicographical Recommendation Engine
             </div>
             
             <h1 className="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
-              Load-Dependent Weather Risk Classification
+              Deterministic Route Risk Metrics & Recommendation
             </h1>
             
             <p className="text-slate-600 text-sm sm:text-base leading-relaxed">
-              Applies load-sensitive wind boundaries (30,000 lb & 40,000 lb thresholds), rain and snow rates, and deterministically computes the overall checkpoint risk using the worst condition. Missing weather is never classified as safe.
+              Compares up to three genuine alternative routes using an uncompromising 4-tier lexicographical safety hierarchy: 
+              <strong> Fewest Severe Miles &rarr; Fewest High Miles &rarr; Lowest Distance-Weighted Risk &rarr; Shortest Duration</strong>. 
+              Any route encountering a No Travel checkpoint is strictly excluded.
             </p>
           </div>
         </div>
@@ -220,17 +241,20 @@ export default function App() {
                 <Truck className="w-4 h-4" />
               </div>
               <div>
-                <h2 className="text-sm font-bold text-slate-900">Trip & Risk Planning Engine</h2>
-                <p className="text-xs text-slate-500">Configure origin, destination, truck gross weight, and road sampling</p>
+                <h2 className="text-sm font-bold text-slate-900">Trip & Safety Planning Dispatch</h2>
+                <p className="text-xs text-slate-500">Configure origin, destination, cargo weight, and road sampling</p>
               </div>
             </div>
 
             <div className="flex items-center gap-2">
+              <span className="text-[11px] font-mono bg-teal-50 text-teal-800 border border-teal-200 px-2 py-0.5 rounded font-semibold">
+                Tier 1: Severe Miles
+              </span>
               <span className="text-[11px] font-mono bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded font-semibold">
-                Crosswind: &gt;30k lb / &gt;40k lb Rules
+                Tier 2: High Miles
               </span>
               <span className="text-[11px] font-mono bg-rose-50 text-rose-800 border border-rose-200 px-2 py-0.5 rounded font-semibold">
-                Wind &ge;55 mph: No Travel
+                No Travel = Excluded
               </span>
             </div>
           </div>
@@ -329,7 +353,7 @@ export default function App() {
                   className="w-full py-2 px-4 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold flex items-center justify-center gap-2 transition disabled:opacity-50 shadow-sm"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${previewLoading ? 'animate-spin' : ''}`} />
-                  {previewLoading ? 'Evaluating...' : 'Analyze Safety Risks'}
+                  {previewLoading ? 'Evaluating...' : 'Rank & Recommend'}
                 </button>
               </div>
             </form>
@@ -347,7 +371,7 @@ export default function App() {
 
             {/* Results Display */}
             {previewResult && (
-              <div className="mt-6 space-y-5">
+              <div className="mt-6 space-y-6">
                 {/* Geocoding resolved banner */}
                 <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
@@ -371,66 +395,192 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* RECOMMENDATION WINNER OR ALL-INELIGIBLE BANNER */}
+                {recommendation && (
+                  <div>
+                    {recommendation.status === 'recommended' ? (
+                      <div className="p-5 rounded-2xl bg-gradient-to-r from-teal-900 via-slate-900 to-indigo-950 text-white shadow-md border border-teal-500/30 relative overflow-hidden">
+                        <div className="absolute top-0 right-0 p-6 opacity-10 pointer-events-none">
+                          <Trophy className="w-36 h-36 text-teal-300" />
+                        </div>
+                        <div className="relative z-10 space-y-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-teal-400/20 border border-teal-400/40 text-teal-300 text-xs font-bold uppercase tracking-wider">
+                              <Trophy className="w-3.5 h-3.5 text-teal-400" />
+                              Recommended Route Winner
+                            </div>
+                            <span className="text-xs font-mono px-2.5 py-1 rounded bg-white/10 text-slate-200 border border-white/10">
+                              {DECISION_CRITERION_LABELS[recommendation.decision_criterion] || recommendation.decision_criterion}
+                            </span>
+                          </div>
+
+                          <div className="flex flex-col sm:flex-row sm:items-baseline gap-3">
+                            <h3 className="text-2xl font-extrabold text-white tracking-tight">
+                              {recommendation.winning_route_name}
+                            </h3>
+                            <span className="text-xs text-teal-300 font-mono">
+                              (Route ID: {recommendation.recommended_route_id})
+                            </span>
+                          </div>
+
+                          <p className="text-sm text-slate-200 leading-relaxed font-normal">
+                            {recommendation.explanation}
+                          </p>
+
+                          {recommendation.tradeoffs_summary && (
+                            <div className="pt-2 border-t border-white/10 text-xs text-slate-300 flex items-start gap-2">
+                              <Award className="w-4 h-4 text-teal-400 shrink-0 mt-0.5" />
+                              <div>
+                                <span className="font-semibold text-teal-300">Tradeoffs & Alternatives: </span>
+                                <span>{recommendation.tradeoffs_summary}</span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ) : recommendation.status === 'no_eligible_routes' ? (
+                      <div className="p-5 rounded-2xl bg-gradient-to-r from-rose-950 via-rose-900 to-red-950 text-white shadow-md border border-rose-500/40 relative overflow-hidden">
+                        <div className="relative z-10 space-y-3">
+                          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-rose-500/20 border border-rose-400/40 text-rose-200 text-xs font-bold uppercase tracking-wider">
+                            <ShieldAlert className="w-4 h-4 text-rose-400 animate-pulse" />
+                            Warning: No Route Meets Safety Rules
+                          </div>
+
+                          <h3 className="text-xl font-bold text-white tracking-tight">
+                            All Candidate Routes Contain No Travel Hazard Checkpoints
+                          </h3>
+
+                          <p className="text-sm text-rose-100 leading-relaxed">
+                            {recommendation.explanation}
+                          </p>
+
+                          <div className="pt-2 border-t border-rose-800/60 text-xs text-rose-200">
+                            <strong>Safety Violations: </strong>{recommendation.tradeoffs_summary}
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+
                 {/* Route Alternatives Selection Cards */}
                 <div>
-                  <h3 className="text-xs font-bold text-slate-700 mb-2 uppercase tracking-wider">
-                    Alternative Routes ({previewResult.routes_count} Available):
-                  </h3>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      Candidate Route Evaluation ({previewResult.routes_count} Alternatives Analyzed):
+                    </h3>
+                    <span className="text-[11px] text-slate-500">
+                      Ranked strictly by Severe miles &rarr; High miles &rarr; Avg Risk &rarr; Travel Time
+                    </span>
+                  </div>
+
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     {previewResult.routes.map((rt) => {
                       const isSelected = rt.id === selectedRouteId;
-                      const hasNoTravel = rt.has_no_travel;
+                      const isRecommended = rt.is_recommended;
+                      const metrics = rt.metrics || {};
+                      const isEligible = metrics.is_eligible !== false && !rt.has_no_travel;
+
+                      // Calculate risk distribution percentages for stacked bar
+                      const totalDist = metrics.total_distance_miles || rt.distance_miles || 1;
+                      const pctLow = Math.round(((metrics.low_miles || 0) / totalDist) * 100);
+                      const pctMod = Math.round(((metrics.moderate_miles || 0) / totalDist) * 100);
+                      const pctHigh = Math.round(((metrics.high_miles || 0) / totalDist) * 100);
+                      const pctSev = Math.round(((metrics.severe_miles || 0) / totalDist) * 100);
+                      const pctNo = Math.round(((metrics.no_travel_miles || 0) / totalDist) * 100);
 
                       return (
                         <div
                           key={rt.id}
                           onClick={() => setSelectedRouteId(rt.id)}
-                          className={`p-4 rounded-xl border cursor-pointer transition ${
+                          className={`p-4 rounded-xl border cursor-pointer transition relative flex flex-col justify-between ${
                             isSelected
-                              ? 'border-teal-600 bg-teal-50/20 ring-2 ring-teal-500/20'
+                              ? 'border-teal-600 bg-teal-50/20 ring-2 ring-teal-500/20 shadow-sm'
                               : 'border-slate-200 bg-white hover:border-slate-300'
-                          }`}
+                          } ${isRecommended ? 'ring-1 ring-teal-500/50' : ''}`}
                         >
-                          <div className="flex items-center justify-between mb-2">
-                            <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono uppercase ${
-                                isSelected ? 'bg-teal-600 text-white' : 'bg-slate-100 text-slate-700'
-                              }`}
-                            >
-                              {rt.id}
-                            </span>
-                            {hasNoTravel ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
-                                <ShieldAlert className="w-3 h-3 text-rose-600" />
-                                INELIGIBLE (NO TRAVEL)
+                          <div>
+                            {/* Card Header */}
+                            <div className="flex items-center justify-between mb-2">
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono uppercase ${
+                                  isRecommended ? 'bg-teal-600 text-white' : 'bg-slate-100 text-slate-700'
+                                }`}
+                              >
+                                {rt.id} {isRecommended && '★ WINNER'}
                               </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                                ELIGIBLE
-                              </span>
-                            )}
+
+                              {isEligible ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                  <Check className="w-3 h-3 text-emerald-600" />
+                                  ELIGIBLE
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                                  <Ban className="w-3 h-3 text-rose-600" />
+                                  INELIGIBLE
+                                </span>
+                              )}
+                            </div>
+
+                            <h4 className="font-bold text-sm text-slate-900 mb-2 truncate" title={rt.name}>
+                              {rt.name}
+                            </h4>
+
+                            {/* 4-Tier Lexicographical Criteria Grid */}
+                            <div className="grid grid-cols-2 gap-2 my-3 p-2.5 rounded-lg bg-slate-50 border border-slate-100 text-xs">
+                              <div>
+                                <span className="text-[10px] text-slate-500 block uppercase font-mono">Tier 1: Severe Miles</span>
+                                <span className={`font-mono font-bold text-xs ${
+                                  (metrics.severe_miles || 0) > 0 ? 'text-orange-600' : 'text-emerald-700'
+                                }`}>
+                                  {metrics.severe_miles !== undefined ? `${metrics.severe_miles} mi` : '—'}
+                                </span>
+                              </div>
+
+                              <div>
+                                <span className="text-[10px] text-slate-500 block uppercase font-mono">Tier 2: High Miles</span>
+                                <span className={`font-mono font-bold text-xs ${
+                                  (metrics.high_miles || 0) > 0 ? 'text-amber-600' : 'text-emerald-700'
+                                }`}>
+                                  {metrics.high_miles !== undefined ? `${metrics.high_miles} mi` : '—'}
+                                </span>
+                              </div>
+
+                              <div>
+                                <span className="text-[10px] text-slate-500 block uppercase font-mono">Tier 3: Avg Risk</span>
+                                <span className="font-mono font-bold text-xs text-slate-800">
+                                  {metrics.distance_weighted_average_risk !== undefined ? `${metrics.distance_weighted_average_risk} / 4` : '—'}
+                                </span>
+                              </div>
+
+                              <div>
+                                <span className="text-[10px] text-slate-500 block uppercase font-mono">Tier 4: Duration</span>
+                                <span className="font-mono font-bold text-xs text-slate-800">
+                                  {rt.duration_formatted}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Risk Distribution Mileage Bar */}
+                            <div className="space-y-1 mb-2">
+                              <div className="flex justify-between text-[10px] text-slate-500">
+                                <span>Risk Mileage Distribution:</span>
+                                <span>{rt.distance_miles} mi</span>
+                              </div>
+                              <div className="h-2 w-full rounded-full bg-slate-100 flex overflow-hidden border border-slate-200">
+                                <div style={{ width: `${pctLow}%` }} className="bg-emerald-500" title={`Low: ${metrics.low_miles || 0} mi`} />
+                                <div style={{ width: `${pctMod}%` }} className="bg-sky-500" title={`Moderate: ${metrics.moderate_miles || 0} mi`} />
+                                <div style={{ width: `${pctHigh}%` }} className="bg-amber-500" title={`High: ${metrics.high_miles || 0} mi`} />
+                                <div style={{ width: `${pctSev}%` }} className="bg-orange-500" title={`Severe: ${metrics.severe_miles || 0} mi`} />
+                                <div style={{ width: `${pctNo}%` }} className="bg-rose-600" title={`No Travel: ${metrics.no_travel_miles || 0} mi`} />
+                              </div>
+                            </div>
                           </div>
 
-                          <h4 className="font-bold text-sm text-slate-900 mb-2 truncate" title={rt.name}>
-                            {rt.name}
-                          </h4>
-
-                          <div className="space-y-1 text-xs text-slate-600 pt-2 border-t border-slate-100">
-                            <div className="flex justify-between">
-                              <span>Distance:</span>
-                              <strong className="text-slate-900">{rt.distance_miles} miles</strong>
-                            </div>
-                            <div className="flex justify-between">
-                              <span>Duration:</span>
-                              <span className="font-mono">{rt.duration_formatted}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span>Checkpoints Analyzed:</span>
-                              <span className="font-mono font-medium text-teal-800">
-                                {rt.checkpoints_count || rt.checkpoints?.length || 0}
-                              </span>
-                            </div>
+                          <div className="pt-2 border-t border-slate-100 text-[11px] text-slate-500 flex justify-between items-center">
+                            <span>Checkpoints: <strong>{rt.checkpoints_count || rt.checkpoints?.length || 0}</strong></span>
+                            <span className="text-teal-700 font-semibold">{isSelected ? 'Active View' : 'Click to View'}</span>
                           </div>
                         </div>
                       );
@@ -626,7 +776,7 @@ export default function App() {
               <div className="space-y-2.5 pt-2">
                 <div className="flex items-center justify-between text-xs py-1.5 border-b border-slate-100">
                   <span className="text-slate-500">Current Phase:</span>
-                  <span className="font-semibold text-teal-700">Phase 4 (Risk & Load Rules)</span>
+                  <span className="font-semibold text-teal-700">Phase 5 (Recommendation Engine)</span>
                 </div>
                 <div className="flex items-center justify-between text-xs py-1.5 border-b border-slate-100">
                   <span className="text-slate-500">Response Latency:</span>
@@ -636,7 +786,7 @@ export default function App() {
                 </div>
                 <div className="flex items-center justify-between text-xs py-1.5 border-b border-slate-100">
                   <span className="text-slate-500">Automated Tests:</span>
-                  <span className="text-emerald-700 font-semibold font-mono">38 / 38 Passing</span>
+                  <span className="text-emerald-700 font-semibold font-mono">35 / 35 Passing (100%)</span>
                 </div>
                 <div className="flex items-center justify-between text-xs py-1.5">
                   <span className="text-slate-500">CORS Allowed Origin:</span>
@@ -663,61 +813,61 @@ export default function App() {
                   <Layers className="w-5 h-5" />
                 </div>
                 <div>
-                  <h2 className="text-base font-bold text-slate-900">System Architecture</h2>
-                  <p className="text-xs text-slate-500">Modular decoupled services</p>
+                  <h2 className="text-base font-bold text-slate-900">Recommendation Pipeline</h2>
+                  <p className="text-xs text-slate-500">4-Tier Lexicographical Engine</p>
                 </div>
               </div>
 
               <div className="space-y-3">
                 <div className="p-3 rounded-lg bg-slate-50 border border-slate-200/60 flex items-start justify-between">
                   <div>
-                    <p className="text-xs font-semibold text-slate-900">Routing Provider Engine</p>
-                    <p className="text-[11px] text-slate-500">ORS, Mapbox, OSRM multi-provider</p>
+                    <p className="text-xs font-semibold text-slate-900">Tier 1: Severe Miles</p>
+                    <p className="text-[11px] text-slate-500">Hazard minimization takes absolute precedence</p>
                   </div>
                   <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                    ACTIVE
+                    PRIORITY 1
                   </span>
                 </div>
 
                 <div className="p-3 rounded-lg bg-slate-50 border border-slate-200/60 flex items-start justify-between">
                   <div>
-                    <p className="text-xs font-semibold text-slate-900">Time-Aware Checkpoints</p>
-                    <p className="text-[11px] text-slate-500">10/25/50 mi sampling along road geometry</p>
+                    <p className="text-xs font-semibold text-slate-900">Tier 2: High Miles</p>
+                    <p className="text-[11px] text-slate-500">Secondary hazard avoidance when Tier 1 tied</p>
                   </div>
                   <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                    ACTIVE
+                    PRIORITY 2
                   </span>
                 </div>
 
                 <div className="p-3 rounded-lg bg-slate-50 border border-slate-200/60 flex items-start justify-between">
                   <div>
-                    <p className="text-xs font-semibold text-slate-900">Risk & Load Engine</p>
-                    <p className="text-[11px] text-slate-500">Deterministic thresholds & load rules</p>
+                    <p className="text-xs font-semibold text-slate-900">Tier 3: Average Risk</p>
+                    <p className="text-[11px] text-slate-500">Distance-weighted (Low=0, Mod=1, High=2, Sev=3)</p>
                   </div>
                   <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                    PHASE 4 DONE
+                    PRIORITY 3
                   </span>
                 </div>
 
                 <div className="p-3 rounded-lg bg-slate-50 border border-slate-200/60 flex items-start justify-between">
                   <div>
-                    <p className="text-xs font-semibold text-slate-900">Recommendation Engine</p>
-                    <p className="text-[11px] text-slate-500">Severe miles &bull; High miles &bull; Avg risk &bull; Duration</p>
+                    <p className="text-xs font-semibold text-slate-900">Tier 4: Travel Duration</p>
+                    <p className="text-[11px] text-slate-500">Fourth tie-breaker only; never weighted sum</p>
                   </div>
-                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-200 text-slate-700">
-                    PHASE 5 NEXT
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-100 text-teal-800">
+                    TIE-BREAKER
                   </span>
                 </div>
               </div>
             </div>
 
             <div className="mt-4 pt-3 border-t border-slate-100 text-[11px] text-slate-500 flex items-center justify-between">
-              <span>Security: Pure deterministic risk engine</span>
+              <span>Conservative Segment Bounding Method</span>
               <ShieldCheck className="w-4 h-4 text-teal-600" />
             </div>
           </div>
 
-          {/* Phase 4 Acceptance Checklist Card */}
+          {/* Phase 5 Acceptance Checklist Card */}
           <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm flex flex-col justify-between">
             <div>
               <div className="flex items-center gap-2.5 mb-4">
@@ -725,20 +875,21 @@ export default function App() {
                   <Activity className="w-5 h-5" />
                 </div>
                 <div>
-                  <h2 className="text-base font-bold text-slate-900">Phase 4 Acceptance</h2>
-                  <p className="text-xs text-slate-500">Verification checklist</p>
+                  <h2 className="text-base font-bold text-slate-900">Phase 5 Acceptance</h2>
+                  <p className="text-xs text-slate-500">Prompt 5 Verification Checklist</p>
                 </div>
               </div>
 
               <div className="space-y-2.5">
                 {[
-                  { text: 'Every published wind, rain, and snow threshold implemented', done: true },
-                  { text: 'Exactly 30,000 lb and 40,000 lb tested separately from values above', done: true },
-                  { text: 'Wind at 55 mph always returns No Travel for any load', done: true },
-                  { text: 'Worst condition deterministically dictates overall risk', done: true },
-                  { text: 'Shared boundary conventions documented and tested', done: true },
-                  { text: 'Missing weather explicitly marked unknown (never safe)', done: true },
-                  { text: 'Automated test suite passing (38/38 tests)', done: true },
+                  { text: 'Severe miles take priority over everything else (Tier 1)', done: true },
+                  { text: 'High miles are compared only after Severe miles (Tier 2)', done: true },
+                  { text: 'Average risk is distance-weighted (Tier 3)', done: true },
+                  { text: 'Travel time is strictly the 4th tie-breaker (Tier 4)', done: true },
+                  { text: 'No Travel routes are completely excluded from recommendation', done: true },
+                  { text: 'All-ineligible results produce a clear, explicit warning', done: true },
+                  { text: 'Risk miles sum consistently (checkpoints not counted as miles)', done: true },
+                  { text: 'Transparent tradeoff explanations returned for winning route', done: true },
                 ].map((item, idx) => (
                   <div key={idx} className="flex items-center gap-2.5 text-xs">
                     {item.done ? (
@@ -757,7 +908,7 @@ export default function App() {
             <div className="mt-6 p-3 rounded-lg bg-slate-900 text-slate-100 text-xs flex items-center justify-between">
               <div>
                 <span className="text-slate-400 block text-[10px] uppercase font-mono">Next Milestone</span>
-                <span className="font-semibold text-teal-300">Phase 5: Recommendation Engine</span>
+                <span className="font-semibold text-teal-300">Phase 6: Interactive Leaflet Map & 0-48h Slider</span>
               </div>
               <ArrowRight className="w-4 h-4 text-teal-400" />
             </div>
@@ -775,8 +926,8 @@ export default function App() {
               { num: '02', title: 'Routing Engine', status: 'Completed', color: 'border-emerald-500 bg-emerald-50/40 text-emerald-700' },
               { num: '03', title: 'Weather & ETAs', status: 'Completed', color: 'border-emerald-500 bg-emerald-50/40 text-emerald-700' },
               { num: '04', title: 'Risk Engine', status: 'Completed', color: 'border-emerald-500 bg-emerald-50/40 text-emerald-700' },
-              { num: '05', title: 'Recommendation Engine', status: 'Next', color: 'border-teal-500 bg-teal-50/40 text-teal-700' },
-              { num: '06', title: 'Dashboard & Deploy', status: 'Queued', color: 'border-slate-200 bg-slate-50 text-slate-600' },
+              { num: '05', title: 'Recommendation Engine', status: 'Completed', color: 'border-emerald-500 bg-emerald-50/40 text-emerald-700' },
+              { num: '06', title: 'Dashboard & Slider', status: 'Next', color: 'border-teal-500 bg-teal-50/40 text-teal-700' },
             ].map((phase) => (
               <div key={phase.num} className={`p-4 rounded-lg border ${phase.color} flex flex-col justify-between`}>
                 <div>
