@@ -26,6 +26,12 @@ DEBUG = os.getenv('DEBUG', 'True').lower() in ('true', '1', 'yes')
 raw_allowed_hosts = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1')
 ALLOWED_HOSTS = [h.strip() for h in raw_allowed_hosts.split(',') if h.strip()]
 
+# Automatically allow Vercel domains in production/preview
+if os.getenv('VERCEL') or not DEBUG:
+    for domain in ['.vercel.app', 'localhost', '127.0.0.1', '*']:
+        if domain not in ALLOWED_HOSTS:
+            ALLOWED_HOSTS.append(domain)
+
 # Application definition
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -72,13 +78,21 @@ TEMPLATES = [
 WSGI_APPLICATION = 'config.wsgi.application'
 
 # Database
-# https://docs.djangoproject.com/en/6.1/ref/settings/#databases
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+# Use writable /tmp directory on Vercel Serverless Functions
+if os.getenv('VERCEL'):
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': Path('/tmp/db.sqlite3'),
+        }
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 # Password validation
 # https://docs.djangoproject.com/en/6.1/ref/settings/#auth-password-validators
@@ -104,7 +118,8 @@ USE_I18N = True
 USE_TZ = True
 
 # Static files (CSS, JavaScript, Images)
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
@@ -113,7 +128,16 @@ CORS_ALLOWED_ORIGINS = [
     'http://localhost:5173',
     'http://127.0.0.1:5173',
 ]
-CORS_ALLOW_ALL_ORIGINS = False
+
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https:\/\/.*\.vercel\.app$",
+]
+
+# Allow all origins on Vercel or in local debug
+if os.getenv('VERCEL') or DEBUG:
+    CORS_ALLOW_ALL_ORIGINS = True
+else:
+    CORS_ALLOW_ALL_ORIGINS = False
 
 # Django REST Framework configuration
 REST_FRAMEWORK = {

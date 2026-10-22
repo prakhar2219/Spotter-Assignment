@@ -1,306 +1,339 @@
-# Spotter — Weather-Aware Truck Routing & Safety Intelligence Platform
+# Spotter — Weather-Aware Truck Routing
 
-A full-stack freight routing and dispatch intelligence application that evaluates commercial truck routes using time-aware weather forecasts, load-dependent safety rules, checkpoint-level hazard detection, and deterministic route recommendations.
+![Spotter Banner](C:\Users\welco\OneDrive\Desktop\Spotter\frontend\src\assets\image.png)
 
-Built with **React 19**, **Vite**, **Tailwind CSS**, **Leaflet**, **Python 3**, **Django**, and **Django REST Framework**.
+Spotter is a full-stack web application that helps dispatchers evaluate truck routes using weather forecasts, cargo weight, checkpoint-level risk analysis, and route travel time. It generates route alternatives, evaluates weather conditions along each route, and recommends the safest eligible option using a deterministic ranking system.
 
----
+## Features
 
-## Table of Contents
-1. [Core Features](#core-features)
-2. [Safety & Risk Evaluation Engine](#safety--risk-evaluation-engine)
-3. [Lexicographical Recommendation Hierarchy](#lexicographical-recommendation-hierarchy)
-4. [Architecture & System Design](#architecture--system-design)
-5. [Application Views](#application-views)
-6. [Getting Started](#getting-started)
-   - [Prerequisites](#prerequisites)
-   - [Backend Setup](#backend-setup)
-   - [Frontend Setup](#frontend-setup)
-   - [Running Tests](#running-tests)
-7. [API Reference](#api-reference)
-8. [Project Structure](#project-structure)
-9. [License](#license)
+### Plan Trip
+- Search for origin and destination locations using geocoding autocomplete.
+- Specify departure date and time, truck load weight, and checkpoint sampling interval.
+- Choose checkpoint intervals of 10, 25, or 50 miles.
+- Generate route alternatives and evaluate their weather conditions.
 
----
+### Route Comparison
+- Compare up to three route alternatives returned by the routing provider.
+- View route distance, travel duration, estimated arrival, and risk metrics.
+- Display route geometries and checkpoint risk markers on an interactive map.
+- Identify the recommended route and understand the ranking criteria.
+- Distinguish eligible and ineligible routes.
 
-## Core Features
+### Route Details
+- Inspect checkpoints along a selected route.
+- View cumulative distance, estimated arrival time, and weather conditions.
+- Examine wind speed, rainfall, snowfall, and associated risk classifications.
+- Review route-level safety metrics and load-dependent advisories.
+- Select checkpoints on the map and inspect their details.
 
-- **Multi-Route Analysis**: Requests up to 3 genuine alternative highway corridors (using OSRM / OpenRouteService routing engines) without fabricating or duplicating routes.
-- **Road Geometry Checkpoint Sampling**: Samples road geometries at strict user-selected intervals (10, 25, or 50 miles) plus origin and destination points.
-- **Time-Aware Forecast Mapping**: Estimates arrival times (ETAs) at each individual checkpoint along the route and queries hourly weather predictions for the exact forecasted arrival time window.
-- **Cargo-Weight-Adjusted Wind Safety Rules**: Evaluates crosswind and wind gust risks dynamically based on vehicle gross weight (empty/light vs. medium vs. heavy).
-- **Multi-Dimensional Risk Matrix**: Analyzes wind speeds, gusts, rainfall rate, snowfall rate, and surface visibility.
-- **Dynamic 0–48h Weather Scrubber**: Interactive timeline slider allowing dispatchers to scrub forward up to 48 hours to assess changing weather fronts along all corridors.
-- **Trip History & Persistence**: Full CRUD management of planned trips stored in SQLite with full-text search, multi-factor filtering (risk tier, status, date), CSV/JSON export, and one-click replanning.
+### Weather Explorer
+- Explore available forecasts across a 0–48-hour timeline.
+- Play, pause, and navigate between forecast timestamps.
+- Switch between overall risk, wind speed, rainfall, and snowfall layers.
+- Inspect checkpoint weather conditions and risk warnings.
+- Visualize weather risk along the route corridor using available forecast data.
 
----
+### Trip History
+- View previously saved trip plans and their results.
+- Search trips by origin, destination, or trip identifier.
+- Filter records by status, risk level, and departure date.
+- Reopen saved route and checkpoint details.
+- Replan a previous trip using current forecasts.
+- Export trip records to CSV or JSON where supported.
 
-## Safety & Risk Evaluation Engine
+## Technology Stack
 
-### 1. Load-Dependent Wind Thresholds
-Lighter trailers are substantially more vulnerable to rollover accidents caused by crosswinds and high gusts. The platform dynamically applies wind risk thresholds based on cargo gross weight:
+| Component | Technology |
+|---|---|
+| Frontend | React 19, Vite, JavaScript |
+| Styling | Tailwind CSS |
+| Maps | Leaflet, React Leaflet |
+| Backend | Python, Django, Django REST Framework |
+| Routing | OSRM or a configured routing provider |
+| Geocoding | OpenStreetMap Nominatim |
+| Weather | Open-Meteo |
+| Database | SQLite for local development |
+| Testing | Django automated tests, Vite production build |
 
-| Truck Load (lbs) | Classification | Low Risk | Medium Risk | High Risk | Severe Risk |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **< 20,000 lbs** | Empty / Light | < 20 mph | 20 – 29 mph | 30 – 39 mph | ≥ 40 mph |
-| **20,000 – 45,000 lbs** | Medium Load | < 25 mph | 25 – 34 mph | 35 – 44 mph | ≥ 45 mph |
-| **> 45,000 lbs** | Heavy Load | < 30 mph | 30 – 39 mph | 40 – 49 mph | ≥ 50 mph |
+## How It Works
 
-### 2. Precipitation & Snow Thresholds
-- **Rainfall Rate**:
-  - `Low`: < 0.10 in/hr
-  - `Medium`: 0.10 – 0.30 in/hr
-  - `High`: 0.30 – 0.50 in/hr
-  - `Severe`: > 0.50 in/hr
-- **Snowfall Rate**:
-  - `Low`: 0.00 in/hr
-  - `Medium`: 0.01 – 0.50 in/hr
-  - `High`: 0.50 – 1.00 in/hr
-  - `Severe`: > 1.00 in/hr
+1. **Trip input:** The user provides the origin, destination, departure time, truck load weight, and checkpoint interval.
+2. **Route generation:** The backend requests available road-route alternatives from the routing provider.
+3. **Checkpoint sampling:** Route geometries are sampled at the selected distance interval, including appropriate endpoints.
+4. **ETA calculation:** The backend estimates when the truck will reach each checkpoint.
+5. **Weather retrieval:** Weather forecasts are associated with checkpoint locations and their estimated arrival times.
+6. **Risk evaluation:** Weather conditions are normalized and evaluated against the configured weather and load-safety rules.
+7. **Route ranking:** Eligible routes are compared using the prescribed lexicographical ranking hierarchy.
+8. **Results and persistence:** Route summaries, checkpoints, risk metrics, and recommendations are returned to the frontend. Trip results are saved for historical access when persistence is enabled.
 
----
+## Risk Evaluation
 
-## Lexicographical Recommendation Hierarchy
+The application evaluates wind, rainfall, and snowfall conditions at route checkpoints.
 
-Routes are ranked using a strict, non-negotiable four-tier decision order:
+### Weather thresholds
 
-1. **Fewest Severe Risk Miles**: Routes with less exposure to extreme hazard zones are preferred first.
-2. **Fewest High Risk Miles**: If Severe miles are tied, the route with fewer High-risk miles is chosen.
-3. **Lowest Distance-Weighted Average Risk**: If High miles are tied, the route with the lowest composite distance-weighted risk score is selected.
-4. **Shortest Travel Duration**: If risk metrics are identical, the fastest corridor is selected.
+| Condition | Low | Moderate | High | Severe | No Travel |
+|---|---|---|---|---|---|
+| Wind | Under 25 mph | 25–34 mph | 35–44 mph | 45–54 mph | 55 mph or more |
+| Rainfall | Under 0.10 in/hr | 0.10–0.25 in/hr | 0.25–0.50 in/hr | 0.50–1.00 in/hr | Over 1.00 in/hr |
+| Snowfall | Under 0.5 in/hr | 0.5–1.0 in/hr | 1.0–2.0 in/hr | 2.0–3.0 in/hr | Over 3.0 in/hr |
 
-> **Ineligibility Rule**: Any route containing a "No Travel" checkpoint (e.g. winds ≥ 60 mph or blizzard conditions exceeding safety thresholds) is marked **Ineligible**. If all available corridors contain "No Travel" checkpoints, the system displays an explicit warning stating that no route safely accommodates the trip under configured parameters.
+### Load-dependent rules
 
----
+- Wind speeds of 55 mph or more result in No Travel for any load.
+- Wind speeds of 45–54 mph result in No Travel when the truck load exceeds 30,000 lb.
+- Wind speeds of 35–44 mph result in Severe risk when the truck load exceeds 40,000 lb.
 
-## Architecture & System Design
+Boundary conditions should be handled consistently in the classifier and covered by automated tests.
 
+### Route recommendation
+
+Eligible routes are ranked in this order:
+
+1. Fewest severe-risk miles.
+2. Fewest high-risk miles.
+3. Lowest distance-weighted average risk.
+4. Shortest travel duration.
+
+Routes containing a No Travel checkpoint are marked ineligible. If all available routes are ineligible, the application should clearly communicate that no eligible route is available under the evaluated conditions.
+
+## Architecture
+
+```text
+React + Vite Frontend
+        |
+        | HTTP / REST
+        v
+Django REST Framework
+        |
+        +---- Trip Planning and ETA Calculation
+        |
+        +---- Checkpoint Generation
+        |
+        +---- Weather Retrieval and Normalization
+        |
+        +---- Risk Classification and Route Ranking
+        |
+        +---- Trip History and Export
+        |
+        +---- OSRM / Routing Provider
+        |
+        +---- Open-Meteo Weather API
+        |
+        +---- Database
 ```
-                     ┌─────────────────────────────────────────┐
-                     │          React 19 + Vite Frontend       │
-                     │  (Tailwind CSS v4, React-Leaflet, DRF)  │
-                     └────────────────────┬────────────────────┘
-                                          │ HTTP / REST
-                                          ▼
-                     ┌─────────────────────────────────────────┐
-                     │         Django REST Framework API       │
-                     │                                         │
-                     │  ┌───────────────────────────────────┐  │
-                     │  │        Trip Planning Engine       │  │
-                     │  │  - Checkpoint Sampling (10/25/50) │  │
-                     │  │  - ETA Progression Calculator     │  │
-                     │  │  - Load-Dependent Wind Analyzer   │  │
-                     │  │  - 4-Tier Recommendation Ranker   │  │
-                     │  └─────────────────┬─────────────────┘  │
-                     │                    │                    │
-                     │  ┌─────────────────┴─────────────────┐  │
-                     │  │      Trip History & Persistence   │  │
-                     │  │  - SQLite3 Database               │  │
-                     │  │  - Multi-Filter & Search Engine   │  │
-                     │  │  - Export (JSON/CSV) Generator    │  │
-                     │  └───────────────────────────────────┘  │
-                     └─────────┬─────────────────────┬─────────┘
-                               │                     │
-                     OSRM API  │                     │ Open-Meteo API
-                               ▼                     ▼
-                     ┌──────────────────┐  ┌──────────────────┐
-                     │ Multi-Corridor   │  │ Hourly Forecast  │
-                     │ Geometry Engine  │  │ Weather Provider │
-                     └──────────────────┘  └──────────────────┘
-```
 
----
-
-## Application Views
-
-### 1. Plan Trip
-- Origin and Destination inputs with real-time geocoding autocomplete.
-- Quick origin/destination swap and current-time departure presets.
-- Truck load in pounds with cargo category badges (Empty, Partial, Full).
-- Checkpoint sampling interval selector (10, 25, or 50 miles).
-
-### 2. Route Comparison
-- Side-by-side comparison cards with safety badges (`RECOMMENDED`, `ELIGIBLE`, `INELIGIBLE`).
-- Distance, travel duration, Severe miles, High miles, and distance-weighted risk scores.
-- Interactive multi-route Leaflet map rendering all alternative corridors with distinct colors and risk heatmaps.
-- Detailed metric breakdown table for dispatcher review.
-
-### 3. Route Details
-- Comprehensive checkpoint-by-checkpoint table with cumulative mileages and estimated arrival times.
-- Interactive pin inspection showing temperature, precipitation, wind speed, wind gusts, and road safety advisories.
-- Dynamic Load Advisory Banner detailing the exact crosswind tolerances enforced for the current trailer weight.
-- Chronological Route Risk Timeline illustrating hazard progression over time and distance.
-
-### 4. Weather Explorer
-- Interactive 0–48 hour forecast scrubber slider with Play / Pause simulation.
-- Layer toggles for Temperature, Precipitation, and Wind radar contours.
-- Time-aware inspection of weather fronts along all route geometries simultaneously.
-
-### 5. Trip History
-- Central repository of previously planned trips stored in the backend database.
-- Search by origin, destination, or trip identifier.
-- Multi-factor filtering by risk level (`Low`, `Medium`, `High`, `Severe`), status (`Completed`, `Scheduled`, `In-Transit`, `Cancelled`), and departure dates.
-- One-click replan feature to re-evaluate past trips under current live forecasts.
-- One-click CSV and JSON export for dispatch logs and safety auditing.
-
----
+The frontend handles user interaction, map visualization, route selection, and forecast controls. The Django backend coordinates external API calls, calculates checkpoints and risk metrics, ranks routes, and manages saved trip records.
 
 ## Getting Started
 
 ### Prerequisites
-- **Node.js**: v18.0.0 or higher
-- **Python**: v3.10, v3.11, or v3.12
-- **npm** or **yarn**
 
----
+- Node.js 18 or later
+- Python 3.10–3.12
+- npm
+- Git
 
-### Backend Setup
+### 1. Clone the repository
 
-1. **Navigate to the backend directory**:
-   ```bash
-   cd backend
-   ```
+```bash
+git clone YOUR_GITHUB_REPOSITORY_URL
+cd YOUR_PROJECT_DIRECTORY
+```
 
-2. **Create and activate a Python virtual environment**:
-   ```bash
-   # Windows
-   python -m venv .venv
-   .venv\Scripts\activate
+Replace the placeholders with your actual repository URL and directory name.
 
-   # macOS / Linux
-   python3 -m venv .venv
-   source .venv/bin/activate
-   ```
+### 2. Set up the backend
 
-3. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Configure Environment Variables**:
-   ```bash
-   cp .env.example .env
-   ```
-   *(The default `.env.example` comes pre-configured for standard local development with zero external API key requirements).*
-
-5. **Apply database migrations**:
-   ```bash
-   python manage.py migrate
-   ```
-
-6. **Start the Django development server**:
-   ```bash
-   python manage.py runserver 127.0.0.1:8000
-   ```
-   The backend API will be available at `http://127.0.0.1:8000/api/routes/`.
-
----
-
-### Frontend Setup
-
-1. **Navigate to the frontend directory**:
-   ```bash
-   cd frontend
-   ```
-
-2. **Install dependencies**:
-   ```bash
-   npm install
-   ```
-
-3. **Start the Vite development server**:
-   ```bash
-   npm run dev
-   ```
-   The frontend application will be running at `http://127.0.0.1:5173/`.
-
----
-
-### Running Tests
-
-#### Backend Test Suite (58 Automated Unit & Integration Tests)
-Tests cover risk classification boundaries, cargo load thresholds, ETA estimation, checkpoint sampling intervals, OSRM routing fallbacks, and 4-tier recommendation rankings:
 ```bash
 cd backend
-python manage.py test routing
+python -m venv .venv
 ```
 
-#### Frontend Production Build Verification
-Verifies TypeScript/JavaScript syntax, Tailwind CSS compilation, and React asset bundling:
+Activate the environment on Windows:
+
+```powershell
+.venv\Scripts\activate
+```
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+If the repository includes an environment template, copy it:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Configure the required environment variables according to your backend settings.
+
+Run database migrations:
+
+```bash
+python manage.py migrate
+```
+
+Start the development server:
+
+```bash
+python manage.py runserver 127.0.0.1:8000
+```
+
+The backend will be available at `http://127.0.0.1:8000/`.
+
+### 3. Set up the frontend
+
+Open a second terminal:
+
 ```bash
 cd frontend
-npm run build
+npm install
 ```
 
----
+Configure the frontend API base URL using the environment variable expected by the application. For Vite, environment variables exposed to frontend code commonly use the `VITE_` prefix.
+
+Start the development server:
+
+```bash
+npm run dev
+```
+
+The frontend will be available at `http://127.0.0.1:5173/`.
 
 ## API Reference
 
+The following endpoints describe the intended API surface. Confirm the paths and methods against the current Django URL configuration.
+
 | Method | Endpoint | Description |
-| :--- | :--- | :--- |
-| `POST` | `/api/routes/plan/` | Calculate up to 3 routes, checkpoints, weather ETAs, and recommendation ranking |
-| `GET` | `/api/routes/autocomplete/?q={query}` | Geocoding autocomplete for origin and destination cities/addresses |
-| `GET` | `/api/routes/trips/` | List historical trips with search, status/risk filtering, and pagination |
-| `GET` | `/api/routes/trips/{id}/` | Retrieve full checkpoint and route details for a persisted trip |
-| `POST` | `/api/routes/trips/{id}/replan/` | Re-evaluate an existing trip using live weather forecasts |
-| `DELETE` | `/api/routes/trips/{id}/` | Delete a historical trip record |
+|---|---|---|
+| `POST` | `/api/routes/plan/` | Plan a trip and return route, checkpoint, weather, and recommendation results |
+| `GET` | `/api/routes/autocomplete/?q={query}` | Search for origin and destination locations |
+| `GET` | `/api/routes/trips/` | Retrieve saved trips with supported search and filters |
+| `GET` | `/api/routes/trips/{id}/` | Retrieve a saved trip and its details |
+| `POST` | `/api/routes/trips/{id}/replan/` | Re-evaluate a saved trip using current forecasts |
+| `DELETE` | `/api/routes/trips/{id}/` | Delete a saved trip, if supported |
+
+## Testing
+
+### Backend tests
+
+From the `backend` directory:
+
+```bash
+python manage.py test routing
+```
+
+The test suite should cover checkpoint generation, ETA calculations, weather-unit normalization, risk boundaries, load-dependent rules, route ranking, and API behavior.
+
+### Frontend production build
+
+From the `frontend` directory:
+
+```bash
+npm run build
+```
+
+Verify that the build completes successfully, then test the deployed application separately to confirm that API requests, routing, weather retrieval, and map interactions work correctly.
 
 ---
+
+## Deployment on Vercel
+
+The application is pre-configured for seamless zero-config deployment on Vercel. Both the **React 19 Vite frontend** and the **Django 6 REST Framework backend** run as a unified serverless application under a single Vercel project with automatic SQLite `/tmp` migrations and relative API routing.
+
+### Option A: Unified Full-Stack Deployment (Recommended — 1 Click)
+
+Deploy the entire repository (both frontend & backend) as a single Vercel project:
+
+1. **Push your code to GitHub** (already synchronized at `https://github.com/prakhar2219/Spotter-Assignment.git`).
+2. Log in to the [Vercel Dashboard](https://vercel.com/dashboard) and click **"Add New..."** → **"Project"**.
+3. Import the `Spotter-Assignment` repository.
+4. In the **Project Configuration** screen:
+   - **Framework Preset**: Leave as default / `Other` (the root [vercel.json](file:///c:/Users/welco/OneDrive/Desktop/Spotter/vercel.json) orchestrates `@vercel/static-build` for Vite and `@vercel/python` for Django).
+   - **Root Directory**: `./` (leave blank / root).
+5. **Environment Variables** (optional in development; recommended for production):
+   - `DEBUG`: `False`
+   - `SECRET_KEY`: `your-production-secret-key-here`
+   - `ALLOWED_HOSTS`: `.vercel.app`
+6. Click **Deploy**.
+7. Vercel will bundle the Vite frontend, package the Django serverless function, and provision a live URL (e.g. `https://spotter-assignment.vercel.app/`).
+
+---
+
+### Option B: Deploying via Vercel CLI
+
+You can also deploy directly from your local terminal using the Vercel CLI:
+
+```bash
+# 1. Install Vercel CLI globally
+npm install -g vercel
+
+# 2. Log in to your Vercel account
+vercel login
+
+# 3. Deploy preview build from the project root
+vercel
+
+# 4. Deploy production build
+vercel --prod
+```
+
+---
+
+### Option C: Separate Frontend & Backend Projects (If Preferred)
+
+If you prefer two separate Vercel projects:
+
+#### 1. Backend Project
+- In Vercel, set **Root Directory** to `backend`.
+- Vercel uses [backend/vercel.json](file:///c:/Users/welco/OneDrive/Desktop/Spotter/backend/vercel.json) and [backend/api/index.py](file:///c:/Users/welco/OneDrive/Desktop/Spotter/backend/api/index.py).
+- Note the resulting URL (e.g. `https://spotter-backend.vercel.app`).
+
+#### 2. Frontend Project
+- In Vercel, set **Root Directory** to `frontend`.
+- Set the Environment Variable:
+  - `VITE_API_BASE_URL` = `https://spotter-backend.vercel.app`
+- Deploy. The frontend connects directly to your backend project over HTTPS with pre-configured CORS support.
+
+---
+
+### Vercel Serverless Architecture Highlights
+
+- **Serverless WSGI Adapter**: [api/index.py](file:///c:/Users/welco/OneDrive/Desktop/Spotter/api/index.py) boots Django using `get_wsgi_application()` wrapped for Vercel's Python runtime.
+- **Serverless SQLite in `/tmp`**: When running on Vercel (`VERCEL=1`), Django automatically maps `db.sqlite3` to `/tmp/db.sqlite3` and executes migrations on cold start, preserving trip history persistence in serverless environments.
+- **Unified Domain Routing**: All `/api/*` traffic routes internally to Django serverless functions, eliminating CORS latency and origin mismatch errors in production.
+- **SPA Fallback**: Deep link reloads automatically fall back to `index.html` via Vercel rewrite rules.
+
 
 ## Project Structure
 
-```
+```text
 Spotter/
-├── README.md                           # System overview & operational guide
-├── .gitignore                          # Git ignore rules for Python, Node, and envs
 ├── backend/
-│   ├── manage.py                       # Django management script
-│   ├── requirements.txt                # Python backend dependencies
-│   ├── .env.example                    # Sample environment configurations
-│   ├── spotter_backend/                # Core Django project settings & ASGI/WSGI
-│   │   ├── settings.py
-│   │   ├── urls.py
-│   │   └── wsgi.py
-│   └── routing/                        # Truck routing & weather application
-│       ├── models.py                   # Historical trip persistence schema
-│       ├── views.py                    # REST API endpoints & viewsets
-│       ├── urls.py                     # Route URL dispatching
-│       ├── tests.py                    # 58 comprehensive unit & integration tests
+│   ├── manage.py
+│   ├── requirements.txt
+│   ├── .env.example
+│   ├── spotter_backend/
+│   └── routing/
+│       ├── models.py
+│       ├── views.py
+│       ├── urls.py
+│       ├── tests.py
 │       ├── services/
-│       │   ├── autocomplete.py         # Nominatim geocoding & location suggestions
-│       │   ├── checkpoints.py          # Geometry interpolation & checkpoint sampling
-│       │   ├── history_seeds.py        # Default historical trip seed generator
-│       │   ├── osrm.py                 # Multi-alternative route corridor client
-│       │   ├── planner.py              # Trip coordination & ETA calculation
-│       │   └── weather.py              # Open-Meteo hourly forecast client
 │       └── recommendation/
-│           ├── classifier.py           # Wind, rain, snow & load rule classification
-│           ├── metrics.py              # Severe/High miles & distance-weighted risk
-│           └── ranker.py               # 4-tier lexicographical recommendation
-└── frontend/
-    ├── package.json                    # Node.js dependencies & scripts
-    ├── vite.config.js                  # Vite build configuration
-    ├── index.html                      # HTML entrypoint
-    └── src/
-        ├── main.jsx                    # React root rendering
-        ├── App.jsx                     # Top-level state & navigation controller
-        ├── index.css                   # Tailwind CSS styling & animations
-        ├── components/
-        │   ├── Header.jsx              # Modernized navigation bar with status badges
-        │   ├── Sidebar.jsx             # Dispatch navigation drawer
-        │   ├── PlanTripPage.jsx        # Trip planning form with cargo & interval options
-        │   ├── RouteComparisonPage.jsx # Multi-route comparison dashboard & map
-        │   ├── RouteDetailsPage.jsx    # Checkpoints table, pin inspection, timeline
-        │   ├── WeatherExplorerPage.jsx # 0–48h forecast scrubber & radar layer view
-        │   ├── TripHistoryPage.jsx     # Persisted trip history, filters, and exports
-        │   ├── ExportTripModal.jsx     # CSV/JSON trip export dialog
-        │   └── RouteMap.jsx            # Interactive Leaflet map component
-        └── services/
-            └── api.js                  # Axios/Fetch client with backend API endpoints
+├── frontend/
+│   ├── package.json
+│   ├── vite.config.js
+│   └── src/
+│       ├── assets/
+│       ├── App.jsx
+│       ├── index.css
+│       ├── components/
+│       └── services/
+├── .gitignore
+└── README.md
 ```
 
----
-
-## License
-
-This project is licensed under the MIT License — see the repository for full details.
