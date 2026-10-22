@@ -1,6 +1,5 @@
 # Spotter — Weather-Aware Truck Routing
-![Spotter Banner](C:\Users\welco\OneDrive\Desktop\Spotter\frontend\src\assets\image.png)
-
+![Spotter Banner](frontend/src/assets/image.png)
 Spotter is a full-stack web application that helps dispatchers evaluate truck routes using weather forecasts, cargo weight, checkpoint-level risk analysis, and route travel time. It generates route alternatives, evaluates weather conditions along each route, and recommends the safest eligible option using a deterministic ranking system.
 
 ## Features
