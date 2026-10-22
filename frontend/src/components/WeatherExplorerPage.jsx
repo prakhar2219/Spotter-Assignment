@@ -135,39 +135,17 @@ export default function WeatherExplorerPage({
     };
   }, [selectedRouteId]);
 
-  // Handle empty state
-  if (!planResult || !planResult.routes || planResult.routes.length === 0) {
-    return (
-      <div className="max-w-md mx-auto px-6 py-20 text-center space-y-4">
-        <div className="w-14 h-14 rounded-2xl bg-teal-50 text-teal-600 flex items-center justify-center mx-auto shadow-xs border border-teal-100">
-          <MapPin className="w-7 h-7" />
-        </div>
-        <h3 className="text-lg font-bold text-slate-800">No Planned Route Loaded</h3>
-        <p className="text-xs text-slate-500 leading-relaxed">
-          The Weather Explorer visualizes weather evolution along a planned truck corridor. Please plan a trip or select a route first.
-        </p>
-        <button
-          type="button"
-          onClick={onNewTrip}
-          className="px-5 py-2.5 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-semibold shadow-xs transition"
-        >
-          Plan a Trip
-        </button>
-      </div>
-    );
-  }
-
-  const routes = planResult.routes || [];
-  const recommendation = planResult.recommendation || {};
-  const trip = planResult.trip || {};
+  const routes = planResult?.routes || [];
+  const recommendation = planResult?.recommendation || {};
+  const trip = planResult?.trip || {};
 
   // Current active route
   const currentRoute =
     routes.find((r) => r.id === selectedRouteId) ||
     routes.find((r) => r.id === recommendation.recommended_route_id) ||
-    routes[0];
+    routes[0] || null;
 
-  const currentRouteIndex = routes.findIndex((r) => r.id === currentRoute?.id);
+  const currentRouteIndex = currentRoute ? routes.findIndex((r) => r.id === currentRoute?.id) : -1;
   const routeLetter = currentRouteIndex >= 0 ? String.fromCharCode(65 + currentRouteIndex) : 'A';
   const isRecommended = currentRoute?.id === recommendation.recommended_route_id || currentRoute?.is_recommended;
   const metrics = currentRoute?.metrics || {};
@@ -261,6 +239,28 @@ export default function WeatherExplorerPage({
       return `T+${timelineOffsetHours}h`;
     }
   }, [referenceTimeStr, timelineOffsetHours]);
+
+  // Handle empty state AFTER all hooks are evaluated
+  if (!planResult || !planResult.routes || planResult.routes.length === 0) {
+    return (
+      <div className="max-w-md mx-auto px-6 py-20 text-center space-y-4">
+        <div className="w-14 h-14 rounded-2xl bg-teal-50 text-teal-600 flex items-center justify-center mx-auto shadow-xs border border-teal-100">
+          <MapPin className="w-7 h-7" />
+        </div>
+        <h3 className="text-lg font-bold text-slate-800">No Planned Route Loaded</h3>
+        <p className="text-xs text-slate-500 leading-relaxed">
+          The Weather Explorer visualizes weather evolution along a planned truck corridor. Please plan a trip or select a route first.
+        </p>
+        <button
+          type="button"
+          onClick={onNewTrip}
+          className="px-5 py-2.5 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-semibold shadow-xs transition"
+        >
+          Plan a Trip
+        </button>
+      </div>
+    );
+  }
 
   // Quick navigation handlers for checkpoints
   const handlePrevCheckpoint = () => {
