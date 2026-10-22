@@ -1,5 +1,4 @@
 # Spotter — Weather-Aware Truck Routing
-
 ![Spotter Banner](C:\Users\welco\OneDrive\Desktop\Spotter\frontend\src\assets\image.png)
 
 Spotter is a full-stack web application that helps dispatchers evaluate truck routes using weather forecasts, cargo weight, checkpoint-level risk analysis, and route travel time. It generates route alternatives, evaluates weather conditions along each route, and recommends the safest eligible option using a deterministic ranking system.
@@ -242,24 +241,54 @@ Verify that the build completes successfully, then test the deployed application
 
 ## Deployment on Vercel
 
-The application is pre-configured for seamless zero-config deployment on Vercel. Both the **React 19 Vite frontend** and the **Django 6 REST Framework backend** run as a unified serverless application under a single Vercel project with automatic SQLite `/tmp` migrations and relative API routing.
+The application is pre-configured for Vercel's **Multi-Service Projects** feature ([vercel.com/docs/services](https://vercel.com/docs/services)). Both the **React 19 Vite frontend** and the **Django 6 REST Framework backend** are defined under the top-level `services` key with unified domain routing.
 
-### Option A: Unified Full-Stack Deployment (Recommended — 1 Click)
+```json
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "backend": {
+      "root": "backend",
+      "framework": "django"
+    },
+    "frontend": {
+      "root": "frontend",
+      "framework": "vite"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": {
+        "service": "backend"
+      }
+    },
+    {
+      "source": "/(.*)",
+      "destination": {
+        "service": "frontend"
+      }
+    }
+  ]
+}
+```
 
-Deploy the entire repository (both frontend & backend) as a single Vercel project:
+### Option A: Import via Vercel Dashboard (Multi-Service Project)
 
-1. **Push your code to GitHub** (already synchronized at `https://github.com/prakhar2219/Spotter-Assignment.git`).
-2. Log in to the [Vercel Dashboard](https://vercel.com/dashboard) and click **"Add New..."** → **"Project"**.
+Deploy the multi-service project in 1 click:
+
+1. Push your repository to GitHub (`https://github.com/prakhar2219/Spotter-Assignment.git`).
+2. Go to the [Vercel Dashboard](https://vercel.com/dashboard) and click **"Add New..."** → **"Project"**.
 3. Import the `Spotter-Assignment` repository.
-4. In the **Project Configuration** screen:
-   - **Framework Preset**: Leave as default / `Other` (the root [vercel.json](file:///c:/Users/welco/OneDrive/Desktop/Spotter/vercel.json) orchestrates `@vercel/static-build` for Vite and `@vercel/python` for Django).
-   - **Root Directory**: `./` (leave blank / root).
-5. **Environment Variables** (optional in development; recommended for production):
+4. Vercel will detect the top-level `services` configuration in [vercel.json](file:///c:/Users/welco/OneDrive/Desktop/Spotter/vercel.json).
+5. Review the detected services:
+   - `frontend` (Root: `frontend`, Framework: `vite`, Public: `/(.*)`)
+   - `backend` (Root: `backend`, Framework: `django`, Public: `/api/(.*)`)
+6. (Optional) Set Environment Variables:
    - `DEBUG`: `False`
    - `SECRET_KEY`: `your-production-secret-key-here`
    - `ALLOWED_HOSTS`: `.vercel.app`
-6. Click **Deploy**.
-7. Vercel will bundle the Vite frontend, package the Django serverless function, and provision a live URL (e.g. `https://spotter-assignment.vercel.app/`).
+7. Click **Deploy**. Vercel will build both services independently and route incoming requests automatically.
 
 ---
 
