@@ -164,3 +164,182 @@ export async function planTrip({
   }
 }
 
+const DEFAULT_HUBS = [
+  { name: 'Chicago, IL, USA', category: 'city', coordinates: [-87.6298, 41.8781] },
+  { name: 'New York, NY, USA', category: 'city', coordinates: [-74.0060, 40.7128] },
+  { name: 'Dallas, TX, USA', category: 'city', coordinates: [-96.7970, 32.7767] },
+  { name: 'Atlanta, GA, USA', category: 'city', coordinates: [-84.3880, 33.7490] },
+  { name: 'Los Angeles, CA, USA', category: 'city', coordinates: [-118.2437, 34.0522] },
+];
+
+/**
+ * Fetch autocomplete location suggestions from backend.
+ * @param {string} [query='']
+ * @param {number} [limit=5]
+ * @returns {Promise<Array<{name: string, category: string, coordinates: [number, number]}>>}
+ */
+export async function fetchLocationSuggestions(query = '', limit = 5) {
+  const cleanQ = (query || '').trim();
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/locations/autocomplete/?q=${encodeURIComponent(cleanQ)}&limit=${limit}`);
+    if (!res.ok) {
+      return !cleanQ ? DEFAULT_HUBS.slice(0, limit) : [];
+    }
+    const data = await res.json();
+    const suggestions = data.suggestions || [];
+    return suggestions.length > 0 ? suggestions : (!cleanQ ? DEFAULT_HUBS.slice(0, limit) : []);
+  } catch (err) {
+    console.error('Failed to fetch location suggestions:', err);
+    return !cleanQ ? DEFAULT_HUBS.slice(0, limit) : [];
+  }
+}
+
+/**
+ * Fetch paginated trip history with search, filters, and sorting.
+ */
+export async function fetchTripHistory({
+  page = 1,
+  pageSize = 10,
+  search = '',
+  status = '',
+  risk = '',
+  dateRange = '',
+  from = '',
+  to = '',
+  sortBy = 'departure_time',
+  sortDir = 'desc',
+} = {}) {
+  try {
+    const params = new URLSearchParams();
+    if (page) params.set('page', page);
+    if (pageSize) params.set('page_size', pageSize);
+    if (search) params.set('search', search);
+    if (status && status !== 'all') params.set('status', status);
+    if (risk && risk !== 'all') params.set('risk', risk);
+    if (dateRange && dateRange !== 'all') params.set('date_range', dateRange);
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    if (sortBy) params.set('sort_by', sortBy);
+    if (sortDir) params.set('sort_dir', sortDir);
+
+    const response = await fetch(`${API_BASE_URL}/api/trips/?${params.toString()}`, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    }
+    return { success: true, data, error: null };
+  } catch (err) {
+    return { success: false, data: null, error: err.message || 'Failed to fetch trip history' };
+  }
+}
+
+/**
+ * Fetch stored trip details without re-calculating routes or re-fetching forecasts.
+ */
+export async function fetchTripDetails(tripId) {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/trips/${encodeURIComponent(tripId)}/`, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    }
+    return { success: true, data, error: null };
+  } catch (err) {
+    return { success: false, data: null, error: err.message || 'Failed to fetch trip details' };
+  }
+}
+
+/**
+ * Re-plan a historical trip using its original inputs, creating a new trip record.
+ */
+export async function replanTrip(tripId) {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/trips/${encodeURIComponent(tripId)}/replan/`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    }
+    return { success: true, data, error: null };
+  } catch (err) {
+    return { success: false, data: null, error: err.message || 'Failed to replan trip' };
+  }
+}
+
+/**
+ * Delete a historical trip record.
+ */
+export async function deleteTrip(tripId) {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/trips/${encodeURIComponent(tripId)}/`, {
+      method: 'DELETE',
+      headers: { 'Accept': 'application/json' },
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    }
+    return { success: true, data, error: null };
+  } catch (err) {
+    return { success: false, data: null, error: err.message || 'Failed to delete trip' };
+  }
+}
+
+/**
+ * Export trips to CSV, JSON, or trigger file download.
+ */
+export async function exportTrips({
+  format = 'csv',
+  tripIds = [],
+  scope = {
+    include_summary: true,
+    include_routes: true,
+    include_checkpoints: true,
+    include_weather: false,
+  },
+} = {}) {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/trips/export/`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        format,
+        trip_ids: tripIds,
+        scope,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Export failed with HTTP ${response.status}`);
+    }
+
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = format === 'csv' ? 'spotter_trips_export.csv' : 'spotter_trips_export.json';
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+
+    return { success: true, error: null };
+  } catch (err) {
+    return { success: false, error: err.message || 'Export failed' };
+  }
+}
+
+

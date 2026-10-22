@@ -132,6 +132,43 @@ class OSRMProvider(BaseRoutingProvider):
         if not raw_routes:
             raise NoRoutesFoundError("No routes found between origin and destination.")
 
+        # If OSRM direct query returned fewer than max_alternatives (e.g. 2 routes),
+        # query genuine distinct physical road corridors via lateral waypoints
+        if len(raw_routes) < max_alternatives and len(raw_routes) > 0:
+            import math
+            dx = dest_coords[0] - origin_coords[0]
+            dy = dest_coords[1] - origin_coords[1]
+            dist = math.hypot(dx, dy)
+            if dist > 0.1:
+                mid_x = (origin_coords[0] + dest_coords[0]) / 2.0
+                mid_y = (origin_coords[1] + dest_coords[1]) / 2.0
+                perp_x = -dy / dist
+                perp_y = dx / dist
+
+                for factor in [-0.10, 0.10, -0.18, 0.18, -0.25, 0.25]:
+                    if len(raw_routes) >= max_alternatives:
+                        break
+                    via_x = mid_x + perp_x * dist * factor
+                    via_y = mid_y + perp_y * dist * factor
+                    via_coord_str = f"{origin_coords[0]},{origin_coords[1]};{via_x:.4f},{via_y:.4f};{dest_coords[0]},{dest_coords[1]}"
+                    via_url = f"{self.ROUTER_BASE_URL}/route/v1/driving/{via_coord_str}"
+                    via_params = {
+                        "overview": "full",
+                        "geometries": "geojson",
+                        "steps": "true",
+                    }
+                    try:
+                        v_resp = requests.get(via_url, params=via_params, headers=self.headers, timeout=self.timeout)
+                        if v_resp.status_code == 200:
+                            v_data = v_resp.json()
+                            if v_data.get("code") == "Ok" and v_data.get("routes"):
+                                cand = v_data["routes"][0]
+                                cand_dist = cand.get("distance", 0.0)
+                                if not any(abs(existing.get("distance", 0.0) - cand_dist) < 8000 for existing in raw_routes):
+                                    raw_routes.append(cand)
+                    except Exception:
+                        continue
+
         normalized_routes: List[NormalizedRoute] = []
         for idx, r in enumerate(raw_routes[:max_alternatives]):
             dist_m = float(r.get("distance", 0.0))

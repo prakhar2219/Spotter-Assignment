@@ -2,12 +2,22 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Clock, Play, Pause, RotateCcw } from 'lucide-react';
 
 export default function ForecastSlider({
-  offsetHours,
-  onChangeOffset,
+  offsetHours: propOffsetHours,
+  timelineOffsetHours,
+  onChangeOffset: propOnChangeOffset,
+  setTimelineOffsetHours,
   baseDepartureTime,
   onApplyOffset,
   loading = false,
 }) {
+  const offsetHours =
+    typeof propOffsetHours === 'number'
+      ? propOffsetHours
+      : typeof timelineOffsetHours === 'number'
+      ? timelineOffsetHours
+      : 0;
+
+  const onChangeOffset = propOnChangeOffset || setTimelineOffsetHours || (() => {});
   const [isPlaying, setIsPlaying] = useState(false);
 
   // Auto-play interval for timeline sweep
@@ -31,6 +41,7 @@ export default function ForecastSlider({
 
   const formatDateTime = (dateObj) => {
     try {
+      if (!dateObj || isNaN(dateObj.getTime())) return '—';
       return dateObj.toLocaleString([], {
         weekday: 'short',
         month: 'short',
@@ -43,13 +54,18 @@ export default function ForecastSlider({
     }
   };
 
-  const baseDate = useMemo(() => {
-    return baseDepartureTime ? new Date(baseDepartureTime) : new Date();
+  const baseTimestamp = useMemo(() => {
+    return baseDepartureTime ? Date.parse(baseDepartureTime) : 0;
   }, [baseDepartureTime]);
 
+  const baseDate = useMemo(() => {
+    return baseTimestamp ? new Date(baseTimestamp) : new Date();
+  }, [baseTimestamp]);
+
   const selectedDate = useMemo(() => {
-    return new Date(baseDate.getTime() + offsetHours * 3600 * 1000);
-  }, [baseDate, offsetHours]);
+    const base = baseTimestamp || Date.now();
+    return new Date(base + offsetHours * 3600 * 1000);
+  }, [baseTimestamp, offsetHours]);
 
   const quickOffsets = [0, 6, 12, 24, 36, 48];
 

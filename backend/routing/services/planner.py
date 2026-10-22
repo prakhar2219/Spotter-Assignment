@@ -247,6 +247,10 @@ def plan_trip(
         rt_dict["checkpoints"] = cp_results
         rt_dict["has_no_travel"] = has_no_travel
 
+        dest_arrival_iso = cp_results[-1].get("estimated_arrival_time") if cp_results else None
+        rt_dict["arrival_time"] = dest_arrival_iso
+        rt_dict["estimated_arrival_time"] = dest_arrival_iso
+
         # Compute risk metrics across segments
         total_dist_miles = float(rt_dict.get("distance_miles", 0.0))
         metrics = calculate_route_risk_metrics(
@@ -255,7 +259,10 @@ def plan_trip(
             travel_time_seconds=duration_s,
             travel_time_formatted=rt_dict.get("duration_formatted", ""),
         )
-        rt_dict["metrics"] = metrics.to_dict()
+        metrics_dict = metrics.to_dict()
+        if dest_arrival_iso:
+            metrics_dict["estimated_arrival_formatted"] = dest_arrival_iso
+        rt_dict["metrics"] = metrics_dict
         route_dicts.append(rt_dict)
 
     # 4. Strict 4-Tier Lexicographical Recommendation
@@ -264,10 +271,22 @@ def plan_trip(
     for rt in ranked_routes:
         rt["is_recommended"] = (rt.get("id") == recommendation.recommended_route_id)
 
-    # 5. Assemble Production Response
+    # 5. Generate Stable Sequential Trip ID (e.g. TRP-YYYYMMDD-001)
+    now_utc = datetime.now(timezone.utc)
+    date_code = now_utc.strftime("%Y%m%d")
+    trip_id = f"TRP-{date_code}-001"
+    try:
+        from routing.models import TripPlan
+        count_today = TripPlan.objects.filter(trip_id__startswith=f"TRP-{date_code}").count()
+        trip_id = f"TRP-{date_code}-{count_today + 1:03d}"
+    except Exception:
+        pass
+
+    # 6. Assemble Production Response
     response_payload = {
         "status": "success",
         "trip": {
+            "trip_id": trip_id,
             "origin": origin_loc.to_dict(),
             "destination": dest_loc.to_dict(),
             "departure_time": normalized_dep_str,
@@ -276,7 +295,7 @@ def plan_trip(
             "load_weight_lb": load_lb,
             "sampling_interval_miles": interval_mi,
             "provider": provider.provider_name,
-            "requested_at": datetime.now(timezone.utc).isoformat(),
+            "requested_at": now_utc.isoformat(),
             "coordinate_convention": COORDINATE_CONVENTION,
         },
         "routes_count": len(ranked_routes),
@@ -285,5 +304,45 @@ def plan_trip(
         "warnings": warnings,
         "units": STANDARD_UNITS,
     }
+
+    # 7. Persist Trip Record in SQLite
+    try:
+        from routing.models import TripPlan
+        winning_rt = next((r for r in ranked_routes if r.get("id") == recommendation.recommended_route_id), ranked_routes[0])
+        w_metrics = winning_rt.get("metrics", {})
+        w_risk_level = "Low"
+        if w_metrics.get("has_no_travel"):
+            w_risk_level = "No Travel"
+        elif w_metrics.get("severe_miles", 0) > 0:
+            w_risk_level = "Severe"
+        elif w_metrics.get("high_miles", 0) > 0:
+            w_risk_level = "High"
+        elif w_metrics.get("moderate_miles", 0) > 0:
+            w_risk_level = "Moderate"
+
+        TripPlan.objects.create(
+            trip_id=trip_id,
+            origin_name=origin_loc.display_name,
+            destination_name=dest_loc.display_name,
+            departure_time=dep_dt,
+            departure_time_iso=normalized_dep_str,
+            arrival_time_iso=winning_rt.get("arrival_time", ""),
+            cargo_weight_lb=load_lb,
+            checkpoint_interval_miles=interval_mi,
+            status="completed" if not w_metrics.get("has_no_travel") else "failed",
+            recommended_route_id=winning_rt.get("id", ""),
+            recommended_route_name=winning_rt.get("name", "Route A"),
+            distance_miles=float(winning_rt.get("distance_miles", 0.0)),
+            travel_time_seconds=float(winning_rt.get("duration_seconds", 0.0)),
+            travel_time_formatted=winning_rt.get("duration_formatted", ""),
+            severe_miles=float(w_metrics.get("severe_miles", 0.0)),
+            high_miles=float(w_metrics.get("high_miles", 0.0)),
+            average_risk=float(w_metrics.get("distance_weighted_average_risk", 0.0)),
+            risk_level=w_risk_level,
+            routes_count=len(ranked_routes),
+            full_plan_payload=response_payload,
+        )
+    except Exception as db_err:
+        print(f"Warning: Could not persist trip to database: {db_err}")
 
     return response_payload

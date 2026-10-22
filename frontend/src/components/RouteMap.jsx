@@ -323,6 +323,8 @@ function extractValidLatLngs(coordinates) {
   return valid;
 }
 
+export const ROUTE_COLORS = ['#EF4444', '#2563EB', '#9333EA', '#F59E0B'];
+
 export default function RouteMap({
   routes = [],
   selectedRouteId,
@@ -336,8 +338,10 @@ export default function RouteMap({
   const polylinesLayerRef = useRef(null);
   const markersLayerRef = useRef(null);
 
-  const [showHeatmap, setShowHeatmap] = useState(true);
+  const [showHeatmap, setShowHeatmap] = useState(false);
   const [showMapLegend, setShowMapLegend] = useState(true);
+  const [visibleRoutes, setVisibleRoutes] = useState({});
+  const [showCheckpoints, setShowCheckpoints] = useState(true);
 
   const selectedRoute = useMemo(() => {
     return routes.find((r) => r.id === selectedRouteId) || routes[0];
@@ -395,8 +399,10 @@ export default function RouteMap({
     let selectedLatLngs = [];
     const allRoutesLatLngs = [];
 
-    // 1. Draw each route polyline
-    routes.forEach((rt) => {
+    // 1. Draw each route polyline with distinct colors matching route_comparison page.png
+    routes.forEach((rt, idx) => {
+      if (visibleRoutes[rt.id] === false) return;
+
       const isSelected = rt.id === selectedRouteId;
       const isRecommended = rt.is_recommended;
       const coords = extractValidLatLngs(rt.geometry?.coordinates);
@@ -408,30 +414,15 @@ export default function RouteMap({
         selectedLatLngs = coords;
       }
 
-      let strokeColor = '#94a3b8';
-      let strokeWeight = 3.5;
-      let strokeOpacity = 0.55;
-      let dashPattern = '6, 8';
+      const routeColor = ROUTE_COLORS[idx % ROUTE_COLORS.length];
+      const letter = String.fromCharCode(65 + idx);
 
-      if (isSelected && isRecommended) {
-        strokeColor = '#0d9488'; // Vibrant teal
-        strokeWeight = 6;
-        strokeOpacity = 0.95;
-        dashPattern = undefined;
-      } else if (isSelected && !isRecommended) {
-        strokeColor = '#0284c7'; // Sky/Blue
-        strokeWeight = 5.5;
-        strokeOpacity = 0.95;
-        dashPattern = undefined;
-      } else if (!isSelected && isRecommended) {
-        strokeColor = '#059669'; // Distinct Emerald for unselected recommended route
-        strokeWeight = 4.5;
-        strokeOpacity = 0.85;
-        dashPattern = undefined;
-      }
+      const strokeWeight = isSelected ? 6 : 3.5;
+      const strokeOpacity = isSelected ? 1.0 : 0.65;
+      const dashPattern = isSelected ? undefined : '5, 5';
 
       const poly = L.polyline(coords, {
-        color: strokeColor,
+        color: routeColor,
         weight: strokeWeight,
         opacity: strokeOpacity,
         dashArray: dashPattern,
@@ -441,13 +432,13 @@ export default function RouteMap({
 
       // Tooltip to identify route on hover
       const badgeHtml = isRecommended
-        ? '<span style="background: #fef3c7; color: #92400e; font-size: 10px; font-weight: bold; padding: 1px 5px; border-radius: 3px; margin-left: 6px;">★ RECOMMENDED</span>'
+        ? '<span style="background: #0d9488; color: white; font-size: 10px; font-weight: bold; padding: 1px 5px; border-radius: 3px; margin-left: 6px;">★ RECOMMENDED</span>'
         : '';
       const tooltipText = `
         <div style="font-family: inherit; font-size: 11px;">
-          <strong>${rt.name}</strong> ${badgeHtml}<br/>
+          <strong>Route ${letter}: ${rt.name}</strong> ${badgeHtml}<br/>
           <span style="color: #64748b; font-family: monospace;">${rt.distance_miles} mi &bull; ${rt.duration_formatted}</span>
-          ${!isSelected ? '<span style="display: block; color: #0d9488; font-size: 10px; margin-top: 2px;">Click to select this route</span>' : ''}
+          ${!isSelected ? '<span style="display: block; color: #2563eb; font-size: 10px; margin-top: 2px;">Click to select this route</span>' : ''}
         </div>
       `;
       poly.bindTooltip(tooltipText, { sticky: true });
@@ -458,7 +449,7 @@ export default function RouteMap({
 
       poly.on('mouseover', () => {
         if (!isSelected) {
-          poly.setStyle({ weight: strokeWeight + 2, opacity: 0.9 });
+          poly.setStyle({ weight: strokeWeight + 2, opacity: 0.95 });
         }
       });
       poly.on('mouseout', () => {
@@ -552,6 +543,11 @@ export default function RouteMap({
     // 3. Draw checkpoints for selected route on top of heatmap and polylines
     if (selectedRoute?.checkpoints && selectedRoute.checkpoints.length > 0) {
       selectedRoute.checkpoints.forEach((cp) => {
+        // If checkpoints are hidden, still display the Origin and Destination markers
+        if (!showCheckpoints && !cp.is_origin && !cp.is_destination) {
+          return;
+        }
+
         if (!cp.coordinates || cp.coordinates.length < 2) return;
         const lon = Number(cp.coordinates[0]);
         const lat = Number(cp.coordinates[1]);
@@ -584,7 +580,7 @@ export default function RouteMap({
         console.warn('Could not fit bounds to all routes:', err);
       }
     }
-  }, [routes, selectedRouteId, selectedRoute, onSelectRoute, timelineOffsetHours, showHeatmap, samplingIntervalMiles]);
+  }, [routes, selectedRouteId, selectedRoute, onSelectRoute, timelineOffsetHours, showHeatmap, samplingIntervalMiles, visibleRoutes, showCheckpoints]);
 
   // Action: Zoom/Fit to selected route
   const handleFitSelectedRoute = () => {
@@ -611,38 +607,82 @@ export default function RouteMap({
   };
 
   return (
-    <div className="relative w-full h-[470px] sm:h-[510px] lg:h-[550px] rounded-xl overflow-hidden border border-slate-200 shadow-sm bg-slate-100 flex flex-col">
+    <div className="relative w-full h-[440px] sm:h-[480px] lg:h-[500px] rounded-xl overflow-hidden border border-slate-200/90 shadow-xs bg-slate-100 flex flex-col">
       <div ref={mapContainerRef} className="w-full h-full" />
 
-      {/* Floating Active Route & Timeline Badge (Top-Left) */}
-      <div className="absolute top-3 left-3 z-[1000] bg-white/95 backdrop-blur-xs px-3 py-1.5 rounded-lg border border-slate-200 shadow-xs flex items-center gap-2 text-xs">
-        <Navigation className="w-3.5 h-3.5 text-teal-600" />
-        <span className="font-bold text-slate-900 truncate max-w-[180px] sm:max-w-[260px]">
-          {selectedRoute?.name || 'Corridor Route'}
-        </span>
-        {selectedRoute?.is_recommended && (
-          <span className="px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 text-[10px] font-bold border border-amber-200">
-            ★ Recommended
+      {/* Floating Layer Controls Panel (Top-Left) */}
+      <div className="absolute top-3 left-3 z-[1000] bg-white/95 backdrop-blur-xs p-2.5 rounded-xl border border-slate-200/90 shadow-md text-xs space-y-2 min-w-[155px]">
+        <div className="flex items-center justify-between border-b border-slate-100 pb-1">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+            Route Layers
           </span>
-        )}
-        {timelineOffsetHours > 0 ? (
-          <span className="px-1.5 py-0.2 rounded bg-teal-50 text-teal-800 text-[10px] font-bold border border-teal-200 font-mono">
-            +{timelineOffsetHours}h Snapshot
+          <span className="text-[9.5px] font-mono text-slate-400">
+            {routes.length} paths
           </span>
-        ) : (
-          <span className="text-[10px] text-slate-500 font-mono hidden sm:inline">
-            (ETA-Aware View)
-          </span>
-        )}
+        </div>
+
+        <div className="space-y-1">
+          {routes.map((rt, idx) => {
+            const isVisible = visibleRoutes[rt.id] !== false;
+            const isSelected = rt.id === selectedRouteId;
+            const color = ROUTE_COLORS[idx % ROUTE_COLORS.length];
+            const letter = String.fromCharCode(65 + idx);
+
+            return (
+              <label
+                key={rt.id}
+                className={`flex items-center justify-between gap-2 px-1.5 py-1 rounded cursor-pointer select-none transition-colors ${
+                  isSelected ? 'bg-blue-50/80 font-bold' : 'hover:bg-slate-50'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={isVisible}
+                    onChange={(e) =>
+                      setVisibleRoutes((prev) => ({ ...prev, [rt.id]: e.target.checked }))
+                    }
+                    className="rounded text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer"
+                  />
+                  <span
+                    className="w-3.5 h-1.5 rounded-full inline-block shadow-2xs"
+                    style={{ backgroundColor: color }}
+                  />
+                  <span className="text-[11.5px] text-slate-800">
+                    Route {letter}
+                  </span>
+                </div>
+                {rt.is_recommended && (
+                  <span className="text-[9px] font-bold text-teal-700 bg-teal-50 px-1 py-0.2 rounded border border-teal-200">
+                    ★ Rec
+                  </span>
+                )}
+              </label>
+            );
+          })}
+        </div>
+
+        <div className="border-t border-slate-100 pt-1.5">
+          <label className="flex items-center gap-2 px-1.5 py-0.5 rounded hover:bg-slate-50 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={showCheckpoints}
+              onChange={(e) => setShowCheckpoints(e.target.checked)}
+              className="rounded text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer"
+            />
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block shadow-2xs" />
+            <span className="text-[11px] font-medium text-slate-700">Checkpoints</span>
+          </label>
+        </div>
       </div>
 
-      {/* Map Control Buttons: Fit Active / Fit All / Heatmap Toggle / Legend (Top-Right) */}
+      {/* Map Control Buttons (Top-Right) */}
       <div className="absolute top-3 right-3 z-[1000] flex items-center gap-1.5">
         <button
           type="button"
           onClick={() => setShowHeatmap(!showHeatmap)}
           title={showHeatmap ? 'Hide Corridor Heatmap' : 'Show Corridor Heatmap'}
-          className={`px-2.5 py-1.5 rounded-lg border shadow-xs text-xs font-semibold flex items-center gap-1 transition ${
+          className={`px-2.5 py-1.5 rounded-lg border shadow-xs text-xs font-semibold flex items-center gap-1 transition cursor-pointer ${
             showHeatmap
               ? 'bg-teal-700 text-white border-teal-700 shadow-sm'
               : 'bg-white/95 hover:bg-white text-slate-700 border-slate-200'
@@ -656,9 +696,9 @@ export default function RouteMap({
           type="button"
           onClick={handleFitSelectedRoute}
           title="Zoom to active route"
-          className="px-2.5 py-1.5 rounded-lg bg-white/95 hover:bg-white text-slate-700 hover:text-slate-900 border border-slate-200 shadow-xs text-xs font-semibold flex items-center gap-1 transition"
+          className="px-2.5 py-1.5 rounded-lg bg-white/95 hover:bg-white text-slate-700 hover:text-slate-900 border border-slate-200 shadow-xs text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
         >
-          <ZoomIn className="w-3.5 h-3.5 text-teal-600" />
+          <ZoomIn className="w-3.5 h-3.5 text-blue-600" />
           <span className="hidden sm:inline">Active</span>
         </button>
 
@@ -666,86 +706,47 @@ export default function RouteMap({
           type="button"
           onClick={handleFitAllRoutes}
           title="Fit all routes in corridor"
-          className="px-2.5 py-1.5 rounded-lg bg-white/95 hover:bg-white text-slate-700 hover:text-slate-900 border border-slate-200 shadow-xs text-xs font-semibold flex items-center gap-1 transition"
+          className="px-2.5 py-1.5 rounded-lg bg-white/95 hover:bg-white text-slate-700 hover:text-slate-900 border border-slate-200 shadow-xs text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
         >
           <Maximize2 className="w-3.5 h-3.5 text-slate-600" />
           <span className="hidden sm:inline">All</span>
         </button>
-
-        <button
-          type="button"
-          onClick={() => setShowMapLegend(!showMapLegend)}
-          title="Toggle on-map legend"
-          className={`p-1.5 rounded-lg border shadow-xs transition ${
-            showMapLegend
-              ? 'bg-teal-50 border-teal-300 text-teal-700'
-              : 'bg-white/95 border-slate-200 text-slate-600'
-          }`}
-        >
-          <Layers className="w-4 h-4" />
-        </button>
       </div>
 
-      {/* Floating On-Map Mini Legend & Heatmap Documentation (Bottom-Left) */}
+      {/* Floating Risk Legend Overlay (Bottom-Right) */}
       {showMapLegend && (
-        <div className="absolute bottom-3 left-3 z-[1000] bg-white/95 backdrop-blur-xs p-2.5 rounded-lg border border-slate-200 shadow-xs text-[11px] space-y-1.5 max-w-[300px]">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-1">
-            <span className="font-bold text-slate-800 text-[10.5px] uppercase tracking-wider flex items-center gap-1">
-              <Layers className="w-3 h-3 text-teal-600" /> Map & Heatmap Legend
-            </span>
-            <span className="text-[9.5px] text-slate-400 font-mono">Accessible</span>
+        <div className="absolute bottom-3 right-3 z-[1000] bg-white/95 backdrop-blur-xs px-3 py-2 rounded-xl border border-slate-200/90 shadow-md text-[11px] select-none">
+          <div className="text-[9.5px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+            Weather Risk Legend
           </div>
-
-          <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] text-slate-600">
-            <div className="flex items-center gap-1.5">
-              <span className="w-4 h-1 bg-teal-600 inline-block rounded" />
-              <span>Active Route</span>
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <div className="flex items-center gap-1">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#10b981] inline-block shadow-2xs" />
+              <span className="text-slate-600 text-[10.5px]">Low</span>
             </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-4 h-1 bg-emerald-600 inline-block rounded" />
-              <span>Recommended</span>
+            <div className="flex items-center gap-1">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#0284c7] inline-block shadow-2xs" />
+              <span className="text-slate-600 text-[10.5px]">Moderate</span>
             </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-4 h-0.5 border-t border-dashed border-slate-400 inline-block" />
-              <span>Alternatives</span>
+            <div className="flex items-center gap-1">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#f59e0b] inline-block shadow-2xs" />
+              <span className="text-slate-600 text-[10.5px]">High</span>
             </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block border border-white" />
-              <span>Low (0)</span>
+            <div className="flex items-center gap-1">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#f97316] inline-block shadow-2xs" />
+              <span className="text-slate-600 text-[10.5px]">Severe</span>
             </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-sky-500 inline-block border border-white" />
-              <span>Moderate (1)</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block border border-white" />
-              <span>High (2)</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-orange-500 inline-block border border-white" />
-              <span>Severe (3)</span>
-            </div>
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1">
               <span
-                className="w-3 h-3 bg-rose-600 text-white font-bold text-[8px] flex items-center justify-center rounded-xs"
+                className="w-3 h-3 bg-[#e11d48] text-white flex items-center justify-center font-bold text-[7px] shadow-2xs"
                 style={{
                   clipPath: 'polygon(30% 0%, 70% 0%, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0% 70%, 0% 30%)',
                 }}
               >
                 ✕
               </span>
-              <strong className="text-rose-700">No Travel (4)</strong>
+              <span className="text-rose-700 font-bold text-[10.5px]">No Travel</span>
             </div>
-            <div className="flex items-center gap-1.5 col-span-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-purple-600 text-white font-bold text-[7px] flex items-center justify-center border border-dashed border-purple-300">
-                ?
-              </span>
-              <span className="text-purple-800">Unknown (Forecast Missing)</span>
-            </div>
-          </div>
-
-          <div className="border-t border-slate-100 pt-1 text-[9.5px] text-slate-500 italic">
-            Heatmap: Corridor risk buffer halos derived from checkpoint forecasts.
           </div>
         </div>
       )}
@@ -756,7 +757,7 @@ export default function RouteMap({
           <Navigation className="w-8 h-8 text-slate-400 animate-bounce" />
           <p className="font-bold text-slate-700 text-sm">No Route Geometry Loaded</p>
           <p className="text-xs text-slate-500 max-w-sm">
-            Enter origin, destination, and cargo load above, then click <strong>Plan Safe Route</strong> to view real road geometry and checkpoint weather risks.
+            Enter origin, destination, and cargo load, then click <strong>Plan Safe Route</strong> to view real road geometry and checkpoint weather risks.
           </p>
         </div>
       )}

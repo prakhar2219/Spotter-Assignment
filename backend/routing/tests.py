@@ -1177,4 +1177,98 @@ class PlanEndpointUnavailableWeatherAndSafetyTests(TestCase):
         self.assertTrue(any("Weather forecast unavailable" in w for w in warnings))
 
 
+class TripHistoryEndpointTests(TestCase):
+    """
+    Validates Trip History API endpoints:
+    - GET /api/trips/ (list, search, filter, pagination)
+    - GET /api/trips/{trip_id}/ (detail retrieval)
+    - POST /api/trips/export/ (CSV and JSON export)
+    - DELETE /api/trips/{trip_id}/ (deletion)
+    """
+    def setUp(self):
+        self.client = APIClient()
+        from routing.services.history_seeds import ensure_seed_trips
+        ensure_seed_trips()
+
+    def test_list_trips_pagination(self):
+        url = reverse('trips-list')
+        response = self.client.get(url, {'page': 1, 'page_size': 5})
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data.get("status"), "success")
+        self.assertGreaterEqual(data.get("total_count"), 12)
+        self.assertEqual(len(data.get("results")), 5)
+        self.assertEqual(data.get("page_size"), 5)
+
+    def test_search_trips(self):
+        url = reverse('trips-list')
+        response = self.client.get(url, {'search': 'Denver'})
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        for item in data.get("results", []):
+            matches = 'Denver' in item['destination'] or 'Denver' in item['origin']
+            self.assertTrue(matches)
+
+    def test_filter_by_status(self):
+        url = reverse('trips-list')
+        response = self.client.get(url, {'status': 'failed'})
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        for item in data.get("results", []):
+            self.assertEqual(item['status'].lower(), 'failed')
+
+    def test_filter_by_risk(self):
+        url = reverse('trips-list')
+        response = self.client.get(url, {'risk': 'High'})
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        for item in data.get("results", []):
+            self.assertEqual(item['risk_level'], 'High')
+
+    def test_get_trip_detail(self):
+        url = reverse('trips-detail', kwargs={'trip_id': 'TRP-20261020-001'})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data.get("trip_id"), "TRP-20261020-001")
+        self.assertIn("summary", data)
+        self.assertIn("plan", data)
+        self.assertEqual(data["summary"]["origin"], "Chicago, IL, USA")
+        self.assertGreaterEqual(len(data["plan"].get("routes", [])), 1)
+
+    def test_export_csv_and_json(self):
+        import json
+        url = reverse('trips-export')
+        
+        # Test CSV
+        csv_res = self.client.post(url, {"format": "csv"}, format='json')
+        self.assertEqual(csv_res.status_code, 200)
+        self.assertEqual(csv_res['Content-Type'], 'text/csv')
+        self.assertIn('Trip ID', csv_res.content.decode('utf-8'))
+
+        # Test JSON
+        json_res = self.client.post(url, {"format": "json"}, format='json')
+        self.assertEqual(json_res.status_code, 200)
+        self.assertEqual(json_res['Content-Type'], 'application/json')
+        json_data = json.loads(json_res.content.decode('utf-8'))
+        self.assertIsInstance(json_data, list)
+        self.assertGreaterEqual(len(json_data), 12)
+
+    def test_delete_trip(self):
+        from django.utils import timezone as dj_timezone
+        from routing.models import TripPlan
+        t = TripPlan.objects.create(
+            trip_id="TRP-TEST-DEL",
+            origin_name="Start",
+            destination_name="End",
+            departure_time=dj_timezone.now(),
+        )
+        url = reverse('trips-detail', kwargs={'trip_id': "TRP-TEST-DEL"})
+        del_res = self.client.delete(url)
+        self.assertEqual(del_res.status_code, 200)
+        self.assertFalse(TripPlan.objects.filter(trip_id="TRP-TEST-DEL").exists())
+
+
+
+
 

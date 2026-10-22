@@ -63,6 +63,7 @@ class RouteRiskMetrics:
             "is_eligible": self.is_eligible,
             "ineligibility_reasons": self.ineligibility_reasons,
             "segment_risk_assignment_method": "Conservative Max-Bound: max(risk(C_{k-1}), risk(C_k))",
+            "segments": [s.to_dict() for s in self.segments],
         }
 
 def calculate_route_risk_metrics(

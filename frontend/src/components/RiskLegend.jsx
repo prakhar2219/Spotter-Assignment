@@ -1,68 +1,7 @@
 import React from 'react';
 import { ShieldAlert, Info } from 'lucide-react';
-
-export const RISK_LEVELS = {
-  'Low': {
-    color: '#10b981',
-    bg: 'bg-emerald-50 text-emerald-800 border-emerald-200',
-    dot: 'bg-emerald-500',
-    score: 0,
-    label: 'Low Risk',
-    desc: 'Wind <25 mph, Rain <0.10 in/hr, Snow <0.5 in/hr',
-    symbol: '●',
-    shape: 'circle',
-  },
-  'Moderate': {
-    color: '#0284c7',
-    bg: 'bg-sky-50 text-sky-800 border-sky-200',
-    dot: 'bg-sky-500',
-    score: 1,
-    label: 'Moderate',
-    desc: 'Wind 25–34 mph, Rain 0.10–0.25 in/hr, Snow 0.5–1.0 in/hr',
-    symbol: '●',
-    shape: 'circle',
-  },
-  'High': {
-    color: '#f59e0b',
-    bg: 'bg-amber-50 text-amber-800 border-amber-200',
-    dot: 'bg-amber-500',
-    score: 2,
-    label: 'High Risk',
-    desc: 'Wind 35–44 mph (≤40k lb), Rain 0.25–0.50 in/hr, Snow 1.0–2.0 in/hr',
-    symbol: '●',
-    shape: 'circle',
-  },
-  'Severe': {
-    color: '#f97316',
-    bg: 'bg-orange-50 text-orange-900 border-orange-300',
-    dot: 'bg-orange-500',
-    score: 3,
-    label: 'Severe Risk',
-    desc: 'Wind 45–54 mph (≤30k lb) or 35–44 mph (>40k lb), Rain 0.50–1.00 in/hr, Snow 2.0–3.0 in/hr',
-    symbol: '●',
-    shape: 'circle',
-  },
-  'No Travel': {
-    color: '#e11d48',
-    bg: 'bg-rose-100 text-rose-900 border-rose-300 font-bold',
-    dot: 'bg-rose-600',
-    score: 4,
-    label: 'NO TRAVEL',
-    desc: 'Wind ≥55 mph (any load), 45–54 mph (>30k lb), Rain >1.00 in/hr, Snow >3.0 in/hr',
-    symbol: '⛔',
-    shape: 'octagon',
-  },
-  'Unknown': {
-    color: '#7c3aed',
-    bg: 'bg-purple-50 text-purple-900 border-purple-300 font-semibold',
-    dot: 'bg-purple-600',
-    score: '—',
-    label: 'Unknown',
-    desc: 'Missing or unavailable forecast. Never treated as safe.',
-    symbol: '?',
-    shape: 'dashed',
-  },
-};
+import { RISK_LEVELS } from '../constants/risk';
+export { RISK_LEVELS };
 
 export default function RiskLegend({ compact = false }) {
   if (compact) {
