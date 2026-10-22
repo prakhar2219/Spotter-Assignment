@@ -1,6 +1,12 @@
-import React, { useEffect, useRef, useMemo, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+
+// Ensure window.L is available for leaflet plugins in Vite/ESM
+if (typeof window !== 'undefined' && !window.L) {
+  window.L = L;
+}
+import 'leaflet.heat';
+
 import { RISK_LEVELS } from './RiskLegend';
 import { Navigation, ZoomIn, Maximize2, Layers, Flame } from 'lucide-react';
 
@@ -467,8 +473,15 @@ export default function RouteMap({
 
     // 2. Render Corridor Weather Heatmap Overlay (underneath route line and markers)
     if (showHeatmap && selectedRoute?.checkpoints && selectedRoute.checkpoints.length > 0) {
-      // Dynamic halo radius matching corridor sampling interval (approx 80% of interval in meters)
-      const haloRadius = Math.max((samplingIntervalMiles || 25) * 1609.34 * 0.85, 22000);
+      const heatPoints = [];
+      const RISK_INTENSITY = {
+        'Low': 0.18,
+        'Moderate': 0.45,
+        'High': 0.70,
+        'Severe': 0.90,
+        'No Travel': 1.00,
+        'Unknown': 0.85,
+      };
 
       selectedRoute.checkpoints.forEach((cp) => {
         if (!cp.coordinates || cp.coordinates.length < 2) return;
@@ -478,60 +491,49 @@ export default function RouteMap({
 
         const activeData = getActiveCheckpointData(cp, timelineOffsetHours);
         const riskLevel = activeData.risk.overall_risk || (activeData.weather?.is_available === false ? 'Unknown' : 'Low');
-        const riskInfo = RISK_LEVELS[riskLevel] || RISK_LEVELS['Low'];
-        const isNoTravel = activeData.risk.is_no_travel || riskLevel === 'No Travel';
-        const isUnknown = riskLevel === 'Unknown' || activeData.weather?.is_available === false;
+        const intensity = RISK_INTENSITY[riskLevel] || 0.18;
 
-        let fillColor = riskInfo.color || '#10b981';
-        let fillOpacity = 0.22;
-        let stroke = false;
-        let weight = 0;
-        let dashArray = undefined;
-
-        if (riskLevel === 'Moderate') {
-          fillOpacity = 0.32;
-        } else if (riskLevel === 'High') {
-          fillOpacity = 0.44;
-          stroke = true;
-          weight = 1;
-        } else if (riskLevel === 'Severe') {
-          fillOpacity = 0.58;
-          stroke = true;
-          weight = 1.5;
-          dashArray = '4, 4';
-        } else if (isNoTravel) {
-          fillColor = '#be123c';
-          fillOpacity = 0.70;
-          stroke = true;
-          weight = 2;
-        } else if (isUnknown) {
-          fillColor = '#7c3aed';
-          fillOpacity = 0.30;
-          stroke = true;
-          weight = 1.5;
-          dashArray = '3, 4';
-        }
-
-        const halo = L.circle([lat, lon], {
-          radius: haloRadius,
-          fillColor: fillColor,
-          fillOpacity: fillOpacity,
-          color: fillColor,
-          weight: weight,
-          stroke: stroke,
-          dashArray: dashArray,
-          interactive: false,
-        });
-
-        heatmapLayerRef.current.addLayer(halo);
+        heatPoints.push([lat, lon, intensity]);
+        heatPoints.push([lat + 0.005, lon + 0.005, intensity * 0.9]);
+        heatPoints.push([lat - 0.005, lon - 0.005, intensity * 0.9]);
       });
+
+      // Also add points along selectedLatLngs to create a continuous highway heat ribbon
+      if (selectedLatLngs.length > 0) {
+        const step = Math.max(Math.floor(selectedLatLngs.length / 40), 1);
+        for (let i = 0; i < selectedLatLngs.length; i += step) {
+          heatPoints.push([selectedLatLngs[i][0], selectedLatLngs[i][1], 0.25]);
+        }
+      }
+
+      if (heatPoints.length > 0 && typeof L.heatLayer === 'function') {
+        try {
+          const heat = L.heatLayer(heatPoints, {
+            radius: 32,
+            blur: 24,
+            maxZoom: 11,
+            minOpacity: 0.38,
+            max: 1.0,
+            gradient: {
+              0.15: '#10B981',
+              0.40: '#F59E0B',
+              0.65: '#F97316',
+              0.85: '#EF4444',
+              1.00: '#991B1B',
+            },
+          });
+          heatmapLayerRef.current.addLayer(heat);
+        } catch {
+          // fallback to glow
+        }
+      }
 
       // Corridor highway underglow track
       if (selectedLatLngs.length > 0) {
         const glow = L.polyline(selectedLatLngs, {
           color: '#0d9488',
-          weight: 18,
-          opacity: 0.18,
+          weight: 16,
+          opacity: 0.22,
           lineCap: 'round',
           lineJoin: 'round',
           interactive: false,
